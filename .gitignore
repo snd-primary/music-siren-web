@@ -6,3 +6,10 @@ doc/
 node_modules/
 dist/
 .vite/
+*.local
+
+# エディタ・OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json

@@ -13,3 +13,11 @@ dist/
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# 録音（他人の録音は解析の参照にとどめる）
+*.mp3
+*.m4a
+*.wav
+*.flac
+*.ogg
+*.mp4

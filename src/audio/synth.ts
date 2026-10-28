@@ -1,11 +1,13 @@
 // サイレン単位の最小の合成。Web Audio に依存しない純粋な DSP（テストはここに書く）。
 //
 // 1台のサイレン：羽根車が回り、固定カバーの窓孔と羽根の重なりが周期的に変わる。
-// 開閉カバーの開度 c（0〜1）で窓孔全体が絞られる。
-//   開口面積 A(t) = c × a(φ)      φ = 窓孔1つ分の位相（ポート数 × 軸回転数 × t）
+// 開閉カバーの開度 c（0〜1）で窓孔全体が絞られる。閉じても leak の分だけ漏れる（岡山の録音で確認）。
+//   開口面積 A(t) = (leak + (1−leak)·c) × a(φ)      φ = 窓孔1つ分の位相（ポート数 × 軸回転数 × t）
 //   流量      Q(t) = A × √P       P ∝ 回転数²  → Q ∝ A × 回転数
-//   音圧      p(t) ∝ dQ/dt        （単極子）
-// a(φ) は羽根と窓の重なりで、実物は台形に近いはずだが、まず折り返しの少ない余弦の累乗で置く（shape で鋭さ）。
+//   音圧      p(t) ∝ dQ/dt        （単極子）、そのあと放射・距離のローパス（1次）
+// a(φ) は羽根と窓の重なりで、半値幅 duty・縁の幅 edge の台形（縁は余弦で丸める）。
+// duty ≈ 0.5 で偶数次倍音が弱くなり、edge とローパスで高次の減り方が決まる。
+// 既定値は岡山の録音の倍音構造（h2 ≈ −14 dB、h3 ≈ −16、h5 ≈ −22、h7 ≈ −28）に合わせた。
 // 半開きでは縁を抜ける乱流のノイズを足す（かすれ）。
 
 export interface SynthSirenConfig {
@@ -20,8 +22,14 @@ export interface SynthConfig {
   readonly sirens: readonly SynthSirenConfig[];
   /** 公称のモーター回転数 [rps]。圧力と音量の基準。 */
   readonly nominalRps: number;
-  /** 開口関数の鋭さ。1 で純正弦に近く、大きいほど倍音が増える。 */
-  readonly shape: number;
+  /** 開口関数（台形）の半値幅。周期に対する比。 */
+  readonly duty: number;
+  /** 開口関数の縁（0→1 に立ち上がる区間）の幅。周期に対する比。 */
+  readonly edge: number;
+  /** 閉じたカバーからの漏れ。全開の開口面積に対する比。 */
+  readonly leak: number;
+  /** 放射と距離を代表する 1 次ローパスのカットオフ [Hz]。 */
+  readonly radiationCutoffHz: number;
   /** 全体の音量。 */
   readonly gain: number;
   /** 半開き時のノイズの量。 */
@@ -29,10 +37,20 @@ export interface SynthConfig {
 }
 
 export const DEFAULT_SYNTH: Omit<SynthConfig, 'sampleRate' | 'sirens' | 'nominalRps'> = {
-  shape: 3,
+  duty: 0.46, // ちょうど 0.5 だと偶数次倍音が消えてしまう。実測は h2 ≈ −14 dB
+  edge: 0.16,
+  leak: 0.03,
+  radiationCutoffHz: 600,
   gain: 0.25,
   noise: 0.15,
 };
+
+/** 窓孔の重なり（0〜1）。ph は 0〜1 の位相。 */
+export function portOpening(ph: number, duty: number, edge: number): number {
+  const d = Math.abs(ph - 0.5);
+  const a = Math.min(1, Math.max(0, (duty / 2 + edge / 2 - d) / edge));
+  return 0.5 - 0.5 * Math.cos(Math.PI * a);
+}
 
 export interface SynthTarget {
   readonly motorRps: number;
@@ -49,6 +67,8 @@ export class SirenSynth {
   private rpsTarget = 0;
   private readonly rpsSmooth: number;
   private readonly coverSmooth: number;
+  private readonly lowpass: number;
+  private lowpassState = 0;
   private noiseState = 0x9e3779b9;
 
   constructor(private readonly config: SynthConfig) {
@@ -60,6 +80,7 @@ export class SirenSynth {
     // メインスレッドからの更新は数十 ms おきなので、その間を 1 次で補間する。
     this.rpsSmooth = 1 - Math.exp(-1 / (0.02 * config.sampleRate));
     this.coverSmooth = 1 - Math.exp(-1 / (0.003 * config.sampleRate));
+    this.lowpass = 1 - Math.exp((-2 * Math.PI * config.radiationCutoffHz) / config.sampleRate);
   }
 
   setTarget(target: SynthTarget): void {
@@ -81,7 +102,7 @@ export class SirenSynth {
   }
 
   render(out: Float32Array): void {
-    const { sampleRate, sirens, nominalRps, shape, gain, noise } = this.config;
+    const { sampleRate, sirens, nominalRps, duty, edge, leak, gain, noise } = this.config;
     const twoPi = Math.PI * 2;
     for (let n = 0; n < out.length; n += 1) {
       this.rps += (this.rpsTarget - this.rps) * this.rpsSmooth;
@@ -95,8 +116,9 @@ export class SirenSynth {
         let ph = (this.phase[i] as number) + cyclesPerSecond / sampleRate;
         if (ph >= 1) ph -= Math.floor(ph);
         this.phase[i] = ph;
-        if (c <= 0 && (this.prevFlow[i] as number) === 0) continue;
-        const area = c * Math.pow(0.5 - 0.5 * Math.cos(twoPi * ph), shape);
+        const opening = leak + (1 - leak) * c;
+        if (opening <= 0 && (this.prevFlow[i] as number) === 0) continue;
+        const area = opening * portOpening(ph, duty, edge);
         const flow = area * speed;
         // dQ/dt を、公称音程での角周波数で正規化して、音程によらず同じ程度の大きさにする。
         const nominalCycles = s.ports * s.ratio * nominalRps;
@@ -105,7 +127,8 @@ export class SirenSynth {
         sum += dflow;
         if (noise > 0 && c > 0 && c < 1) sum += this.white() * noise * area * (1 - c) * 4 * speed;
       }
-      out[n] = Math.tanh(sum * gain * 4);
+      this.lowpassState += (sum - this.lowpassState) * this.lowpass;
+      out[n] = Math.tanh(this.lowpassState * gain * 4);
     }
   }
 }

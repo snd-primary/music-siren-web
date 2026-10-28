@@ -17,14 +17,14 @@ describe('開閉カバー', () => {
       s = stepMachine(machine, s, { ...idle, keys }, P, dt);
       t += dt;
     }
-    expect(t).toBeCloseTo(P.cover.openTime, 2);
+    expect(Math.abs(t - P.cover.openTime)).toBeLessThanOrEqual(dt * 1.01);
     expect(s.covers.filter((c) => c > 0)).toHaveLength(1);
     t = 0;
     while ((s.covers[2] ?? 1) > 0) {
       s = stepMachine(machine, s, idle, P, dt);
       t += dt;
     }
-    expect(t).toBeCloseTo(P.cover.closeTime, 2);
+    expect(Math.abs(t - P.cover.closeTime)).toBeLessThanOrEqual(dt * 1.01);
   });
 });
 

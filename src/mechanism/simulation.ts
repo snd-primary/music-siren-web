@@ -8,13 +8,14 @@ import type { Machine } from './machine';
 import { ratioToNumber } from './ratio';
 
 export interface CoverParams {
-  /** 全閉→全開にかかる時間 [s]（マグネットがレバーを引く）。仮の値。 */
+  /** 全閉→全開にかかる時間 [s]（マグネットがレバーを引く）。 */
   readonly openTime: number;
-  /** 全開→全閉にかかる時間 [s]（スプリングで戻る）。仮の値。 */
+  /** 全開→全閉にかかる時間 [s]（スプリングで戻る）。 */
   readonly closeTime: number;
 }
 
-export const DEFAULT_COVER_PARAMS: CoverParams = { openTime: 0.05, closeTime: 0.1 };
+/** 岡山の録音の立ち上がり 10→90% が 45〜130 ms、立ち下がりが 45〜160 ms だったのに合わせた値。 */
+export const DEFAULT_COVER_PARAMS: CoverParams = { openTime: 0.08, closeTime: 0.12 };
 
 export interface MachineParams {
   readonly drive: DriveParams;

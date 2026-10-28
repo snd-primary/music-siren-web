@@ -14,6 +14,9 @@ import {
   type MachineState,
 } from './mechanism/simulation';
 import { PRESETS } from './presets';
+import { SONGS } from './songs';
+import { compileSong, missingDegrees, type CamProgram } from './mechanism/cam';
+import { AUTO_IDLE, DEFAULT_AUTO_PARAMS, startAuto, stepAutoplay, stopAuto, type AutoState } from './mechanism/autoplay';
 import { SirenScene } from './scene/scene';
 
 const $ = <T extends Element>(sel: string): T => {
@@ -25,6 +28,8 @@ const $ = <T extends Element>(sel: string): T => {
 const presetSelect = $<HTMLSelectElement>('#preset');
 const supplySelect = $<HTMLSelectElement>('#supply');
 const startButton = $<HTMLButtonElement>('#start');
+const autoButton = $<HTMLButtonElement>('#auto');
+const songSelect = $<HTMLSelectElement>('#song');
 const stopButton = $<HTMLButtonElement>('#stop');
 const readout = $<HTMLElement>('#readout');
 const keysBox = $<HTMLElement>('#keys');
@@ -40,6 +45,10 @@ let params: MachineParams = DEFAULT_MACHINE_PARAMS;
 let state: MachineState = initialMachineState(machine);
 let input: MachineInput = { power: false, brake: false, keys: machine.sirens.map(() => false) };
 let engine: AudioEngine | null = null;
+let autoState: AutoState = AUTO_IDLE;
+let program: CamProgram | null = null;
+/** 鍵盤の操作（HAND でも AUT 中でも効く）。 */
+let manualKeys: boolean[] = [];
 const view = new SirenScene(viewCanvas);
 let keyButtons: HTMLButtonElement[] = [];
 /** 鍵盤の並び（低い音から）→ サイレンの index。 */
@@ -50,10 +59,9 @@ function nominalRps(): number {
 }
 
 function setKey(sirenIndex: number, down: boolean): void {
-  const keys = [...input.keys];
-  if (keys[sirenIndex] === down) return;
-  keys[sirenIndex] = down;
-  input = { ...input, keys };
+  if (manualKeys[sirenIndex] === down) return;
+  manualKeys[sirenIndex] = down;
+  if (autoState.phase === 'idle') input = { ...input, keys: [...manualKeys] };
   const pos = keyOrder.indexOf(sirenIndex);
   keyButtons[pos]?.classList.toggle('down', down);
 }
@@ -62,7 +70,10 @@ function rebuildMachine(): void {
   const spec = PRESETS.find((p) => p.id === presetSelect.value) ?? PRESETS[0]!;
   machine = buildMachine(spec);
   state = initialMachineState(machine);
-  input = { power: false, brake: false, keys: machine.sirens.map(() => false) };
+  manualKeys = machine.sirens.map(() => false);
+  input = { power: false, brake: false, keys: [...manualKeys] };
+  autoState = AUTO_IDLE;
+  rebuildProgram();
   startButton.disabled = false;
   stopButton.disabled = true;
   engine?.setMachine(machine, nominalRps());
@@ -125,21 +136,47 @@ function renderTables(): void {
   }
 }
 
-async function start(): Promise<void> {
+function rebuildProgram(): void {
+  const song = SONGS.find((s) => s.id === songSelect.value) ?? SONGS[0];
+  if (!song) return;
+  const missing = missingDegrees(song, machine);
+  program = missing.length === 0 ? compileSong(song, machine) : null;
+  autoButton.disabled = program === null;
+  autoButton.title = missing.length ? `この機種にない音: ${missing.join(' ')}` : '';
+}
+
+async function ensureAudio(): Promise<void> {
   if (!engine) {
     engine = await AudioEngine.create();
     engine.setMachine(machine, nominalRps());
   }
   await engine.resume();
+}
+
+async function start(): Promise<void> {
+  await ensureAudio();
+  autoState = AUTO_IDLE;
   input = { ...input, power: true, brake: false };
   startButton.disabled = true;
+  autoButton.disabled = true;
+  stopButton.disabled = false;
+}
+
+async function startAutoplay(): Promise<void> {
+  if (!program) return;
+  await ensureAudio();
+  autoState = startAuto();
+  startButton.disabled = true;
+  autoButton.disabled = true;
   stopButton.disabled = false;
 }
 
 function stop(): void {
   // 実機は電源断で電磁ブレーキが効く。
-  input = { ...input, power: false, brake: true };
+  if (autoState.phase !== 'idle') autoState = stopAuto();
+  else input = { ...input, power: false, brake: true };
   startButton.disabled = false;
+  autoButton.disabled = program === null;
   stopButton.disabled = true;
 }
 
@@ -147,18 +184,31 @@ function updateReadout(): void {
   const rps = state.drive.rps;
   const steady = nominalRps() * (1 - params.drive.slip);
   const pct = steady > 0 ? (rps / steady) * 100 : 0;
-  const mode = input.power ? '運転中' : input.brake && rps > 0 ? '制動中' : rps > 0 ? '惰性' : '停止中';
+  const auto = { idle: '', starting: 'AUT 起動待ち', playing: 'AUT 演奏中', stopping: 'AUT 停止' }[autoState.phase];
+  const mode = auto || (input.power ? '運転中' : input.brake && rps > 0 ? '制動中' : rps > 0 ? '惰性' : '停止中');
   readout.textContent = `${mode}  モーター ${rps.toFixed(1)} rps（定常の ${pct.toFixed(0)}%）`;
 }
 
 let last = performance.now();
 function frame(now: number): void {
-  const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
+  // 画面の描画が遅くても機構の時間は実時間に合わせる（2 ms 刻みで細分）。タブ切り替え後の大きな飛びだけ抑える。
+  const dt = Math.min(0.5, Math.max(0, (now - last) / 1000));
   last = now;
   // 駆動系は 2 ms 刻みで安定に積分する。
+  if (autoState.phase !== 'idle') {
+    const r = stepAutoplay(autoState, program, machine.sirens.length, DEFAULT_AUTO_PARAMS, dt, state.drive.rps === 0, manualKeys);
+    autoState = r.state;
+    input = r.input;
+    if (autoState.phase === 'idle') {
+      input = { power: false, brake: false, keys: [...manualKeys] };
+      startButton.disabled = false;
+      autoButton.disabled = program === null;
+      stopButton.disabled = true;
+    }
+  }
   const sub = Math.max(1, Math.ceil(dt / 0.002));
   for (let i = 0; i < sub; i += 1) state = stepMachine(machine, state, input, params, dt / sub);
-  if (state.drive.rps === 0 && input.brake) input = { ...input, brake: false };
+  if (autoState.phase === 'idle' && state.drive.rps === 0 && input.brake) input = { ...input, brake: false };
   engine?.update(state);
   view.update(state);
   view.render();
@@ -177,7 +227,15 @@ supplySelect.addEventListener('change', () => {
   params = { ...params, drive: { ...params.drive, supplyHz: Number(supplySelect.value) } };
   rebuildMachine();
 });
+for (const song of SONGS) {
+  const opt = document.createElement('option');
+  opt.value = song.id;
+  opt.textContent = song.title;
+  songSelect.append(opt);
+}
+songSelect.addEventListener('change', rebuildProgram);
 startButton.addEventListener('click', () => void start());
+autoButton.addEventListener('click', () => void startAutoplay());
 stopButton.addEventListener('click', stop);
 window.addEventListener('keydown', (e) => {
   if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;

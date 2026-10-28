@@ -47,6 +47,13 @@
       <div id="keys"></div>
     </fieldset>
 
+    <fieldset>
+      <legend>3D（ドラッグで回転、ホイールで拡大）</legend>
+      <label><input type="checkbox" id="building" /> 建屋を表示</label>
+      <label><input type="checkbox" id="seethrough" /> カバーを透かす</label>
+      <canvas id="view" style="display:block; width:100%; aspect-ratio: 16/9; border-radius: 6px; margin-top: 0.5rem;"></canvas>
+    </fieldset>
+
     <details>
       <summary>配列表の公称値（機構モデルから再現）</summary>
       <div id="tables"></div>

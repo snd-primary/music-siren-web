@@ -14,6 +14,7 @@ import {
   type MachineState,
 } from './mechanism/simulation';
 import { PRESETS } from './presets';
+import { SirenScene } from './scene/scene';
 
 const $ = <T extends Element>(sel: string): T => {
   const el = document.querySelector<T>(sel);
@@ -28,6 +29,9 @@ const stopButton = $<HTMLButtonElement>('#stop');
 const readout = $<HTMLElement>('#readout');
 const keysBox = $<HTMLElement>('#keys');
 const tablesBox = $<HTMLElement>('#tables');
+const viewCanvas = $<HTMLCanvasElement>('#view');
+const buildingCheck = $<HTMLInputElement>('#building');
+const seeThroughCheck = $<HTMLInputElement>('#seethrough');
 
 const KEYBOARD = ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', "'", ']'];
 
@@ -36,6 +40,7 @@ let params: MachineParams = DEFAULT_MACHINE_PARAMS;
 let state: MachineState = initialMachineState(machine);
 let input: MachineInput = { power: false, brake: false, keys: machine.sirens.map(() => false) };
 let engine: AudioEngine | null = null;
+const view = new SirenScene(viewCanvas);
 let keyButtons: HTMLButtonElement[] = [];
 /** 鍵盤の並び（低い音から）→ サイレンの index。 */
 let keyOrder: number[] = [];
@@ -61,6 +66,7 @@ function rebuildMachine(): void {
   startButton.disabled = false;
   stopButton.disabled = true;
   engine?.setMachine(machine, nominalRps());
+  view.setMachine(machine);
 
   // 鍵盤：低い音から並べる。
   keyOrder = [...machine.sirens]
@@ -154,6 +160,8 @@ function frame(now: number): void {
   for (let i = 0; i < sub; i += 1) state = stepMachine(machine, state, input, params, dt / sub);
   if (state.drive.rps === 0 && input.brake) input = { ...input, brake: false };
   engine?.update(state);
+  view.update(state);
+  view.render();
   updateReadout();
   requestAnimationFrame(frame);
 }
@@ -187,6 +195,11 @@ window.addEventListener('keyup', (e) => {
 window.addEventListener('blur', () => {
   for (const i of keyOrder) setKey(i, false);
 });
+
+const applyViewOptions = () => view.setOptions({ showBuilding: buildingCheck.checked, seeThrough: seeThroughCheck.checked });
+buildingCheck.addEventListener('change', applyViewOptions);
+seeThroughCheck.addEventListener('change', applyViewOptions);
+window.addEventListener('resize', () => view.resize());
 
 rebuildMachine();
 renderTables();

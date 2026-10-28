@@ -2,7 +2,7 @@
 
 ヤマハのミュージックサイレン（第1世代機）を、Web Audio による音響シミュレーションと Three.js による3Dモデルで再現する、個人の趣味プロジェクト（完全非営利）。**音と見た目を、同じ1つの機構モデルから導く**ことを目指す。
 
-このファイルは claude.ai での調査・設計の内容を Claude Code に引き継ぐためのもの。詳しい調査メモは `docs/music-siren-project.md` にある。
+このファイルは claude.ai での調査・設計の内容を Claude Code に引き継ぐためのもの。詳しい調査メモは `docs/music-siren-project.md`、直近の作業と次のタスクは `docs/handoff-2026-10-28.md` にある。
 
 ---
 

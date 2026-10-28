@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { formatDegree, parseDegree, degreeRatio } from './degree';
 import { buildMachine, DRIVE, gear, unit } from './machine';
-import { motorRps, synchronousRps } from './pitch';
+import { nominalMotorRps } from './pitch';
+import { synchronousRps } from './drive';
 import { mulRatio, ratio, ratioToString } from './ratio';
 
 describe('ratio', () => {
@@ -33,11 +34,11 @@ describe('degree', () => {
 
 describe('pitch', () => {
   it('2極・60Hz の同期回転数は 60 rps、50Hz は 50 rps', () => {
-    expect(synchronousRps({ supplyHz: 60, poles: 2, slip: 0 })).toBe(60);
-    expect(synchronousRps({ supplyHz: 50, poles: 2, slip: 0 })).toBe(50);
+    expect(synchronousRps({ supplyHz: 60, poles: 2 })).toBe(60);
+    expect(synchronousRps({ supplyHz: 50, poles: 2 })).toBe(50);
   });
   it('滑りの分だけ遅く回る', () => {
-    expect(motorRps({ supplyHz: 60, poles: 2, slip: 0.03 })).toBeCloseTo(58.2);
+    expect(nominalMotorRps({ supplyHz: 60, poles: 2, slip: 0.03 })).toBeCloseTo(58.2);
   });
 });
 

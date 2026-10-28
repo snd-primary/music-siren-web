@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildMachine } from '../mechanism/machine';
 import { degreeKey, degreeRatio, parseDegree } from '../mechanism/degree';
-import { machineFrequencies, sirenFrequency, tonicHz, type DriveState } from '../mechanism/pitch';
+import { machineFrequencies, nominalMotorRps, sirenFrequency, tonicHz } from '../mechanism/pitch';
 import { ratio, ratioEquals, ratioToNumber } from '../mechanism/ratio';
 import { PRESETS } from './index';
 
@@ -37,7 +37,7 @@ const TABLE: Record<string, Record<string, readonly [hz60: number, hz50: number]
   },
 };
 
-const drive = (supplyHz: number): DriveState => ({ supplyHz, poles: 2, slip: 0 });
+const drive = (supplyHz: number): number => nominalMotorRps({ supplyHz, poles: 2, slip: 0 });
 
 describe.each(PRESETS)('$id', (spec) => {
   const machine = buildMachine(spec);

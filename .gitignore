@@ -1,1 +1,24 @@
-doc/*
+# 取扱説明書の PDF はコミットしない（権利まわりのルール）
+*.pdf
+doc/
+docs/
+
+# Node / Vite
+node_modules/
+dist/
+.vite/
+*.local
+
+# エディタ・OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# 録音（他人の録音は解析の参照にとどめる）
+*.mp3
+*.m4a
+*.wav
+*.flac
+*.ogg
+*.mp4

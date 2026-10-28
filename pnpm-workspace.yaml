@@ -1,0 +1,27 @@
+# pnpm の設定（pnpm 10 は .npmrc ではなくここに書く）
+# サプライチェーン攻撃への備えを中心に、厳しめの既定にしてある。
+
+# 公開から 7 日（10080 分）たっていないバージョンは入れない。
+# 乗っ取られたパッケージの悪性バージョンは数時間〜数日で取り下げられることが多いので、その窓を避ける。
+minimumReleaseAge: 10080
+
+# 一度 provenance（trusted publishing）付きで公開されたパッケージが、provenance 無しに戻ったら拒否する。
+trustPolicy: no-downgrade
+
+# 依存の依存が git や URL 指定（レジストリ外）で解決されるのを禁止する。
+blockExoticSubdeps: true
+
+# 依存パッケージのインストールスクリプト（postinstall 等）は既定で実行しない（pnpm 10 の既定）。
+# 実行を許すものは onlyBuiltDependencies に明示する。空＝どれも許さない。
+onlyBuiltDependencies: []
+# スクリプトを持つのに許可されていない依存があったら、黙って無視せずインストールを失敗させる。
+strictDepBuilds: true
+
+# node_modules が lockfile と食い違っていたら pnpm run を止める。
+verifyDepsBeforeRun: error
+
+# バージョンは ^ を付けず固定で保存する。
+saveExact: true
+
+# package.json の engines に合わない Node では動かさない。
+engineStrict: true

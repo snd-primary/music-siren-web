@@ -1,6 +1,7 @@
 # 取扱説明書の PDF はコミットしない（権利まわりのルール）
 *.pdf
 doc/
+docs/
 
 # Node / Vite
 node_modules/

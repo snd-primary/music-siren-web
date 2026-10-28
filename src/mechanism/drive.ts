@@ -2,14 +2,19 @@
 //
 // 2極の三相誘導電動機が、歯車で剛結された全サイレンの羽根車を回す。
 // 慣性と、モーターのトルク特性と、羽根車の空気負荷と、電磁ブレーキで回転数の時間変化が決まる。
-// 説明書でわかっているのは端点だけ：
-//   起動：START から約 10〜15 秒で演奏可能な回転に達する。
-//   停止：電源断から 8〜10 秒で羽根車が止まる（電磁ブレーキ）。
-// カーブの形は仮定で、ここに置いたパラメータで決まる。
+//
+// 根拠：
+//   起動：トキハ本店（10B）の映像では、START から約 5 秒でほぼ一定の加速で定常に達し、
+//         最後に急に止まる（直線的なグライド）。説明書の「起動後約 10〜15 秒たってから演奏」は
+//         演奏前の待ち時間で、回転が上がりきる時間ではない。
+//   停止：説明書では電源断から 8〜10 秒で羽根車が止まる（電磁ブレーキ）。
+//   滑り：トキハの録音では公称値の 0.962 倍（滑り 3.8%）。
 //
 // トルクはすべて「モーターの最大トルク = 1」の無次元で扱い、慣性は時定数 [s] で与える。
 //   dx/dt = (T_motor(x) − T_load(x) − T_brake) / inertia
 // x = 回転数 / 同期回転数（0〜1）。
+// モーターのトルク曲線は区分線形：起動トルク startTorque から x = 1 − kneeSlip で最大 1 まで直線に
+// 上がり、そこから同期回転数で 0 まで直線に落ちる（2重籠形の、平らで最後に急に落ちる特性の近似）。
 
 export interface DriveParams {
   /** 電源周波数 [Hz]。 */
@@ -18,8 +23,10 @@ export interface DriveParams {
   readonly poles: number;
   /** 定常滑り（全カバー閉）。実機の値は伊賀の録音から逆算する予定。 */
   readonly slip: number;
-  /** 最大トルクを出す滑り（Kloss の式）。2重籠形は起動トルクが大きいので大きめ。 */
-  readonly breakdownSlip: number;
+  /** 起動トルク（最大トルク比）。2重籠形なので大きい。 */
+  readonly startTorque: number;
+  /** 最大トルクを出す滑り。ここから同期回転数までトルクが直線に落ちる。 */
+  readonly kneeSlip: number;
   /** 慣性の時定数 [s]：J·ωs / Tmax。起動時間をほぼ決める。 */
   readonly inertia: number;
   /** 電磁ブレーキのトルク（最大トルク比）。停止時間をほぼ決める。 */
@@ -33,10 +40,11 @@ export interface DriveParams {
 export const DEFAULT_DRIVE_PARAMS: DriveParams = {
   supplyHz: 60,
   poles: 2,
-  slip: 0.02,
-  breakdownSlip: 0.3,
-  inertia: 7.6,
-  brakeTorque: 0.8,
+  slip: 0.038,
+  startTorque: 0.8,
+  kneeSlip: 0.1,
+  inertia: 4.3,
+  brakeTorque: 0.35,
   friction: 0.01,
   openLoad: 0.02,
 };
@@ -61,12 +69,13 @@ export function synchronousRps(p: Pick<DriveParams, 'supplyHz' | 'poles'>): numb
   return (p.supplyHz * 2) / p.poles;
 }
 
-/** モーターのトルク（最大トルク比）。Kloss の式。x は同期回転数に対する比。 */
+/** モーターのトルク（最大トルク比）。x は同期回転数に対する比。 */
 export function motorTorque(x: number, p: DriveParams): number {
-  const s = 1 - x;
-  if (s <= 0) return 0;
-  const sk = p.breakdownSlip;
-  return 2 / (s / sk + sk / s);
+  if (x >= 1) return 0;
+  if (x <= 0) return p.startTorque;
+  const knee = 1 - p.kneeSlip;
+  if (x < knee) return p.startTorque + (1 - p.startTorque) * (x / knee);
+  return (1 - x) / p.kneeSlip;
 }
 
 /** 定常状態（全カバー閉）で負荷と釣り合うように決めた空気負荷の係数。 */
@@ -84,8 +93,8 @@ export function loadTorque(x: number, openSum: number, p: DriveParams): number {
 
 /** 定常回転数 [rps]。カバーが開くほど負荷が増えてわずかに下がる。 */
 export function steadyStateRps(p: DriveParams, openSum = 0): number {
-  // T_motor(x) = T_load(x) を二分法で解く。T_motor は x∈(1−sk, 1) で単調減少、T_load は単調増加。
-  let lo = 1 - p.breakdownSlip;
+  // T_motor(x) = T_load(x) を二分法で解く。T_motor は x∈(1−kneeSlip, 1) で単調減少、T_load は単調増加。
+  let lo = 1 - p.kneeSlip;
   let hi = 1;
   for (let i = 0; i < 60; i += 1) {
     const mid = (lo + hi) / 2;

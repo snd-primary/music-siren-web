@@ -39,17 +39,34 @@ describe('駆動系', () => {
     expect(steadyStateRps({ ...P, supplyHz: 50 })).toBeCloseTo(50 * (1 - P.slip), 6);
   });
 
-  it('モーターのトルクは滑り = breakdownSlip で最大 1、同期で 0', () => {
-    expect(motorTorque(1 - P.breakdownSlip, P)).toBeCloseTo(1, 9);
+  it('モーターのトルクは起動で startTorque、滑り = kneeSlip で最大 1、同期で 0', () => {
+    expect(motorTorque(0, P)).toBeCloseTo(P.startTorque, 9);
+    expect(motorTorque(1 - P.kneeSlip, P)).toBeCloseTo(1, 9);
+    expect(motorTorque(1 - P.kneeSlip / 2, P)).toBeCloseTo(0.5, 9);
     expect(motorTorque(1, P)).toBe(0);
-    expect(motorTorque(0, P)).toBeGreaterThan(0.5); // 2重籠形なので起動トルクが大きい
   });
 
-  it('起動：定常の 2% 以内に入るまで 10〜15 秒', () => {
+  it('起動：定常の 2% 以内に入るまで 4.5〜6.5 秒（トキハ本店の映像では約 5.4 秒）', () => {
     const target = steadyStateRps(P);
     const t = runUntil(INITIAL_DRIVE_STATE, { power: true, brake: false, openSum: 0 }, P, (s) => s.rps >= target * 0.98);
-    expect(t).toBeGreaterThanOrEqual(10);
-    expect(t).toBeLessThanOrEqual(15);
+    expect(t).toBeGreaterThanOrEqual(4.5);
+    expect(t).toBeLessThanOrEqual(6.5);
+  });
+
+  it('起動のグライドはほぼ一定の加速（トキハ：2.2〜5.4 秒で 0.20/s）', () => {
+    // 定常の 40% と 90% に達する時刻の間の平均加速度
+    const sync = synchronousRps(P);
+    let s: DriveState = INITIAL_DRIVE_STATE;
+    let t40 = -1;
+    let t90 = -1;
+    for (let t = 0; t < 10 && t90 < 0; t += DT) {
+      s = stepDrive(s, { power: true, brake: false, openSum: 0 }, P, DT);
+      if (t40 < 0 && s.rps >= 0.4 * sync) t40 = t;
+      if (s.rps >= 0.9 * sync) t90 = t;
+    }
+    const slope = 0.5 / (t90 - t40);
+    expect(slope).toBeGreaterThan(0.16);
+    expect(slope).toBeLessThan(0.24);
   });
 
   it('停止：電源断＋ブレーキで 8〜10 秒で止まる', () => {

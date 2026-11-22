@@ -31,49 +31,53 @@ describe('開閉カバー（伊賀の映像の立ち上がりに当てはめた�
     expect(t90 - t10).toBeLessThan(0.03);
   });
 
-  it('停止位置で止まらず、重なりきる位置を通って揺れる（最初の山は定常の 1.15〜1.3 倍、30〜80 ms）', () => {
+  it('停止位置で止まらず、ストッパーまで行く（最初の山は定常の 1.05〜1.3 倍、30〜80 ms）', () => {
     const tr = openTrace();
     const steady = tr[tr.length - 1] ?? 1;
     const first = tr.slice(0, Math.round(0.1 / dt));
     const peak = Math.max(...first);
-    // 重なりきる位置を行きと帰りの 2 回通るので、最初に山の頂上近くに達した時刻を見る
     const tPeak = first.findIndex((c) => c >= peak * 0.99) * dt;
-    expect(peak / steady).toBeGreaterThan(1.15);
+    expect(peak / steady).toBeGreaterThan(1.05);
     expect(peak / steady).toBeLessThan(1.3);
     expect(tPeak).toBeGreaterThan(0.03);
     expect(tPeak).toBeLessThan(0.08);
   });
 
-  it('揺れは約 8 Hz で、0.4 秒で定常の ±3% に収まる', () => {
-    const tr = openTrace();
-    const steady = tr[tr.length - 1] ?? 1;
-    for (let k = Math.round(0.4 / dt); k < tr.length; k += 1) expect(Math.abs((tr[k] ?? 0) / steady - 1)).toBeLessThan(0.03);
-    // 0.1 秒より後で、開度が定常を下から上へ横切る間隔が周期
-    const ups: number[] = [];
-    for (let k = Math.round(0.1 / dt); k < Math.round(0.4 / dt); k += 1) {
-      if ((tr[k - 1] ?? 0) < steady && (tr[k] ?? 0) >= steady) ups.push(k * dt);
+  it('ストッパーに当たって跳ね返り、約 130 ms 後の 2 回目の山も 1 回目に近い高さになる', () => {
+    const tr = openTrace(still, 1.2);
+    const maxima: { t: number; v: number }[] = [];
+    for (let k = 1; k + 1 < tr.length; k += 1) {
+      const c = tr[k] ?? 0;
+      if (c >= (tr[k - 1] ?? 0) && c > (tr[k + 1] ?? 0)) maxima.push({ t: k * dt, v: c });
     }
-    expect(ups.length).toBeGreaterThanOrEqual(1);
-    const angles: number[] = [];
-    let s = initialMachineState(machine, still);
-    for (let k = 0; k < Math.round(0.4 / dt); k += 1) {
-      s = stepMachine(machine, s, { ...idle, keys }, still, dt);
-      angles.push(s.coverAngles[2] ?? 0);
-    }
-    const rest = P.cover.restAngle;
-    const crossings: number[] = [];
-    for (let k = 1; k < angles.length; k += 1) if ((angles[k - 1] ?? 0) < rest && (angles[k] ?? 0) >= rest) crossings.push(k * dt);
-    const period = (crossings[1] ?? 0) - (crossings[0] ?? 0);
-    expect(1 / period).toBeGreaterThan(7);
-    expect(1 / period).toBeLessThan(9);
+    const [first, second] = maxima;
+    expect(first?.v ?? 0).toBeGreaterThan(0.99); // ストッパーまで行く
+    expect((second?.v ?? 0) / (first?.v ?? 1)).toBeGreaterThan(0.95);
+    const gap = (second?.t ?? 0) - (first?.t ?? 0);
+    expect(gap).toBeGreaterThan(0.11);
+    expect(gap).toBeLessThan(0.16);
   });
 
-  it('開いている間は、停止位置のずれでゆっくり揺れる（開度の相対の揺れ 3〜12%。映像では 7〜18%）', () => {
+  it('揺れは 0.8 秒で定常の ±3% に収まる', () => {
+    const tr = openTrace(still, 1.5);
+    const steady = tr[tr.length - 1] ?? 1;
+    for (let k = Math.round(0.8 / dt); k < tr.length; k += 1) expect(Math.abs((tr[k] ?? 0) / steady - 1)).toBeLessThan(0.03);
+  });
+
+  it('カバーはストッパーより先へは行かない', () => {
+    let s = initialMachineState(machine, still);
+    for (let k = 0; k < Math.round(1 / dt); k += 1) {
+      s = stepMachine(machine, s, { ...idle, keys }, still, dt);
+      expect(s.coverAngles[2] ?? 0).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('開いている間は、停止位置のずれでゆっくり揺れる（開度の相対の揺れ 2〜8%）', () => {
     const tr = openTrace(P, 20).slice(Math.round(0.5 / dt));
     const mean = tr.reduce((a, b) => a + b, 0) / tr.length;
     const rel = Math.sqrt(tr.reduce((a, b) => a + (b - mean) ** 2, 0) / tr.length) / mean;
-    expect(rel).toBeGreaterThan(0.03);
-    expect(rel).toBeLessThan(0.12);
+    expect(rel).toBeGreaterThan(0.02);
+    expect(rel).toBeLessThan(0.08);
   });
 
   it('通電を切るとスプリングで closeTime かけて閉じ、閉じている間は揺れない', () => {

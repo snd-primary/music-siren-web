@@ -5,10 +5,11 @@
 //
 // 開閉カバー（docs/adr/0008-cover-bounce.md）：
 //   角度 θ は 0 = 閉（板が窓孔の上）、1 = 開閉カバーの窓と固定カバーの窓孔がぴったり重なる位置。
-//   窓孔の重なり（開度）は θ < 1 で θ、θ > 1 では行き過ぎた分だけ減る：overlap = 1 − |1 − θ|。
-//   マグネットが引くと、θ は停止位置 restAngle へ向かう 2 次の振動になる。停止位置は重なりきる位置より
-//   手前にあり、揺れの山で重なりきる位置を通るので、開いた直後に音が大きくなったり小さくなったりする
-//   （伊賀の映像：約 8 Hz、250〜400 ms で収まる）。開いている間も、停止位置がゆっくりずれ続ける（座りの悪さ）。
+//   窓孔の重なり（開度）は θ。θ = 1 にストッパーがあり、それより先へは行かない（docs/adr/0009-cover-stopper.md）。
+//   マグネットが引くと、θ は停止位置 restAngle へ向かう 2 次の振動になる。停止位置はストッパーより手前にあり、
+//   揺れの山でストッパーに当たって跳ね返る（反発係数 stopRestitution）。当たるたびに重なりきるので、
+//   開いた直後に同じくらいの高さの山が何度か来る（伊賀の映像：約 135 ms おき、0.6〜0.8 秒で収まる）。
+//   開いている間も、停止位置がゆっくりずれ続ける（座りの悪さ）。
 //   通電を切るとスプリングで一定速度で戻り、ストッパーに押し付けられて止まる。閉じている間は揺れない。
 //
 // 空気室の圧の山（surge）：閉じている間に羽根車が空気室の圧を上げ、開いた瞬間にそれが抜ける。
@@ -26,12 +27,14 @@ export interface CoverParams {
    * （マグネットとスプリングの往復の限界）。YMSHA の助言「開閉は1秒2〜3回まで」から 1/3 秒。
    */
   readonly minCycle: number;
-  /** マグネットが引いたときの停止位置（重なりきる位置 = 1）。手前で止まるほど開いた直後の山が目立つ。 */
+  /** マグネットが引いたときの停止位置（ストッパー・重なりきる位置 = 1）。手前で止まるほど開いた直後の山が目立つ。 */
   readonly restAngle: number;
   /** 停止位置のまわりの揺れの固有振動数 [Hz]。 */
   readonly bounceHz: number;
   /** 揺れの減衰比。 */
   readonly bounceDamping: number;
+  /** ストッパー（θ = 1）に当たったときの反発係数（0 = 当たって止まる、1 = 完全に跳ね返る）。 */
+  readonly stopRestitution: number;
   /** 開いている間の停止位置のずれ（角度の標準偏差）。座りの悪さ（劣化）。 */
   readonly wander: number;
   /** 開いた瞬間の圧の山（流量の倍率の増分）。閉じて圧がたまりきったときの値。 */
@@ -42,16 +45,20 @@ export interface CoverParams {
   readonly surgeFillSec: number;
 }
 
-/** 伊賀の映像の、きれいに取れた立ち上がり 9 回に当てはめた値（docs/adr/0008-cover-bounce.md）。 */
+/**
+ * 伊賀の映像の立ち上がりに当てはめた値（docs/adr/0009-cover-stopper.md）から、聴いて揺れを控えめにした値
+ * （docs/adr/0010-milder-cover-bounce.md）。当てはめの値は restAngle 0.85・bounceDamping 0.094・wander 0.05。
+ */
 export const DEFAULT_COVER_PARAMS: CoverParams = {
   closeTime: 0.12,
   minCycle: 1 / 3,
-  restAngle: 0.8,
-  bounceHz: 8,
-  bounceDamping: 0.22,
-  wander: 0.05,
-  surge: 0.4,
-  surgeReleaseSec: 0.3,
+  restAngle: 0.9,
+  bounceHz: 6.45,
+  bounceDamping: 0.15,
+  stopRestitution: 0.235,
+  wander: 0.03,
+  surge: 0.5,
+  surgeReleaseSec: 0.29,
   surgeFillSec: 0.15,
 };
 
@@ -66,7 +73,7 @@ export interface MachineState {
   readonly drive: DriveState;
   /** 各軸の回転位相（0〜1 回転）。machine.shafts と同じ順。 */
   readonly shaftTurns: readonly number[];
-  /** 各開閉カバーの角度 θ（0 = 閉、1 = 重なりきる位置。行き過ぎると 1 を超える）。machine.sirens と同じ順。 */
+  /** 各開閉カバーの角度 θ（0 = 閉、1 = 重なりきる位置・ストッパー）。machine.sirens と同じ順。 */
   readonly coverAngles: readonly number[];
   /** 各開閉カバーの角速度 [1/s]。 */
   readonly coverVelocities: readonly number[];
@@ -100,9 +107,9 @@ export function initialMachineState(machine: Machine, params: MachineParams = DE
   };
 }
 
-/** 窓孔の重なり。θ = 1 で最大、行き過ぎると減る。 */
+/** 窓孔の重なり。θ = 1（ストッパー）で最大。 */
 export function coverOverlap(angle: number): number {
-  return Math.min(1, Math.max(0, 1 - Math.abs(1 - angle)));
+  return Math.min(1, Math.max(0, angle));
 }
 
 /** 整数の組から [-1, 1) の決まった乱数を作る（状態を持たない）。 */
@@ -165,6 +172,11 @@ export function stepMachine(
       const rest = p.restAngle + p.wander * coverWander(i, sinceOpen[i] ?? 0);
       vel += (w * w * (rest - angle) - 2 * p.bounceDamping * w * vel) * dt;
       angle += vel * dt;
+      if (angle > 1) {
+        // ストッパーに当たって跳ね返る
+        angle = 1 - (angle - 1) * p.stopRestitution;
+        vel = -vel * p.stopRestitution;
+      }
       if (angle < 0) {
         angle = 0;
         vel = 0;

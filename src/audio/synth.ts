@@ -49,7 +49,7 @@ export const DEFAULT_SYNTH: Omit<SynthConfig, 'sampleRate' | 'sirens' | 'nominal
   duty: 0.315,
   edge: 0.16,
   // 伊賀の映像：閉じたカバーからの漏れは全開より約 −19 dB（自動利得の分を補正）。閉じている間は圧がたまり
-  // （surge 0.4）、開いても重なりは停止位置の 0.8 なので、その分を見込んで 0.07 にした。
+  // （surge 0.5）、開いても重なりは停止位置の 0.85 なので、その分を見込んで 0.07 にした。
   leak: 0.07,
   radiationCutoffHz: 300,
   gain: 0.12, // 単音の全開で約 −20 dBFS。4 音の和音でもピークが 0.75 未満で、tanh でほとんど歪まない

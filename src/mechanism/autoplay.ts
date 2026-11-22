@@ -32,6 +32,11 @@ export function startAuto(): AutoState {
   return { phase: 'starting', t: 0 };
 }
 
+/** 起動待ちを飛ばして、すぐ演奏に入る（デバッグ用。回転数は snapToSteady で定常にしておく）。 */
+export function skipLeadIn(state: AutoState): AutoState {
+  return state.phase === 'starting' ? { phase: 'playing', t: 0 } : state;
+}
+
 export function stopAuto(): AutoState {
   return { phase: 'stopping', t: 0 };
 }

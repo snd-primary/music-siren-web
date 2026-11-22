@@ -15,7 +15,7 @@
 // 空気室の圧の山（surge）：閉じている間に羽根車が空気室の圧を上げ、開いた瞬間にそれが抜ける。
 //   流量の倍率として 1 + surge を合成に渡す。
 
-import { DEFAULT_DRIVE_PARAMS, INITIAL_DRIVE_STATE, stepDrive, type DriveParams, type DriveState } from './drive';
+import { DEFAULT_DRIVE_PARAMS, INITIAL_DRIVE_STATE, steadyStateRps, stepDrive, type DriveParams, type DriveState } from './drive';
 import type { Machine } from './machine';
 import { ratioToNumber } from './ratio';
 
@@ -210,4 +210,25 @@ export function stepMachine(
   });
 
   return { drive, shaftTurns, coverAngles, coverVelocities, covers, surges, coverPulled, sinceOpen };
+}
+
+// --- デバッグ用 ---
+
+/** 即時定常（デバッグ用）：モーターを全カバー閉の定常回転数にする。軸の位相とカバーはそのまま。 */
+export function snapToSteady(state: MachineState, params: MachineParams): MachineState {
+  return { ...state, drive: { rps: steadyStateRps(params.drive) } };
+}
+
+/** 即時停止（デバッグ用）：回転を止め、全カバーを閉じ、空気室の圧はたまった状態に戻す。軸の位相は保つ。 */
+export function snapToStop(state: MachineState, params: MachineParams): MachineState {
+  return {
+    ...state,
+    drive: { rps: 0 },
+    coverAngles: state.coverAngles.map(() => 0),
+    coverVelocities: state.coverVelocities.map(() => 0),
+    covers: state.covers.map(() => 0),
+    surges: state.surges.map(() => params.cover.surge),
+    coverPulled: state.coverPulled.map(() => false),
+    sinceOpen: state.sinceOpen.map(() => Infinity),
+  };
 }

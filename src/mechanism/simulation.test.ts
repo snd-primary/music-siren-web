@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildMachine } from './machine';
-import { DEFAULT_MACHINE_PARAMS, initialMachineState, stepMachine, type MachineInput } from './simulation';
+import { DEFAULT_MACHINE_PARAMS, initialMachineState, snapToSteady, snapToStop, stepMachine, type MachineInput } from './simulation';
+import { steadyStateRps } from './drive';
 import { IGA_8 } from '../presets/iga-8';
 
 const machine = buildMachine(IGA_8);
@@ -165,5 +166,31 @@ describe('軸の位相', () => {
       expect(turns).toBeGreaterThanOrEqual(0);
       expect(turns).toBeLessThan(1);
     }
+  });
+});
+
+describe('デバッグ用の即時定常・即時停止', () => {
+  it('即時定常：定常回転数になり、通電したまま進めても変わらない', () => {
+    let s = snapToSteady(initialMachineState(machine), P);
+    expect(s.drive.rps).toBeCloseTo(steadyStateRps(P.drive), 9);
+    for (let k = 0; k < 500; k += 1) s = stepMachine(machine, s, { ...idle, power: true }, P, 0.002);
+    expect(s.drive.rps / steadyStateRps(P.drive)).toBeCloseTo(1, 4);
+  });
+
+  it('即時停止：回転 0・全カバー閉・圧はたまった状態。軸の位相は保つ', () => {
+    let s = snapToSteady(initialMachineState(machine), P);
+    const keys = machine.sirens.map((_, i) => i < 3);
+    for (let k = 0; k < 200; k += 1) s = stepMachine(machine, s, { ...idle, power: true, keys }, P, 0.002);
+    const turns = s.shaftTurns;
+    const stopped = snapToStop(s, P);
+    expect(stopped.drive.rps).toBe(0);
+    expect(stopped.covers.every((c) => c === 0)).toBe(true);
+    expect(stopped.coverAngles.every((c) => c === 0)).toBe(true);
+    expect(stopped.coverPulled.every((p) => !p)).toBe(true);
+    expect(stopped.surges.every((v) => v === P.cover.surge)).toBe(true);
+    expect(stopped.shaftTurns).toEqual(turns);
+    // 止めたあとは、すぐにまた開ける（minCycle の待ちが残らない）
+    const after = stepMachine(machine, stopped, { ...idle, keys }, P, 0.002);
+    expect(after.coverPulled.slice(0, 3)).toEqual([true, true, true]);
   });
 });

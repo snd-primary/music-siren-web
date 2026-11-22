@@ -8,6 +8,8 @@ import { ratioToNumber, ratioToString } from './mechanism/ratio';
 import {
   DEFAULT_MACHINE_PARAMS,
   initialMachineState,
+  snapToSteady,
+  snapToStop,
   stepMachine,
   type MachineInput,
   type MachineParams,
@@ -16,7 +18,7 @@ import {
 import { PRESETS } from './presets';
 import { SONGS } from './songs';
 import { compileSong, missingDegrees, type CamProgram } from './mechanism/cam';
-import { AUTO_IDLE, DEFAULT_AUTO_PARAMS, startAuto, stepAutoplay, stopAuto, type AutoState } from './mechanism/autoplay';
+import { AUTO_IDLE, DEFAULT_AUTO_PARAMS, skipLeadIn, startAuto, stepAutoplay, stopAuto, type AutoState } from './mechanism/autoplay';
 import { SirenScene } from './scene/scene';
 
 const $ = <T extends Element>(sel: string): T => {
@@ -31,6 +33,8 @@ const startButton = $<HTMLButtonElement>('#start');
 const autoButton = $<HTMLButtonElement>('#auto');
 const songSelect = $<HTMLSelectElement>('#song');
 const stopButton = $<HTMLButtonElement>('#stop');
+const snapSteadyButton = $<HTMLButtonElement>('#snap-steady');
+const snapStopButton = $<HTMLButtonElement>('#snap-stop');
 const readout = $<HTMLElement>('#readout');
 const keysBox = $<HTMLElement>('#keys');
 const tablesBox = $<HTMLElement>('#tables');
@@ -180,6 +184,30 @@ function stop(): void {
   stopButton.disabled = true;
 }
 
+/** デバッグ：即時定常。AUT の起動待ち中なら演奏の頭へ飛ぶ。止まっていれば HAND で運転中にする。 */
+async function snapSteady(): Promise<void> {
+  await ensureAudio();
+  state = snapToSteady(state, params);
+  if (autoState.phase === 'starting') {
+    autoState = skipLeadIn(autoState);
+  } else if (autoState.phase === 'idle') {
+    input = { ...input, power: true, brake: false };
+    startButton.disabled = true;
+    autoButton.disabled = true;
+    stopButton.disabled = false;
+  }
+}
+
+/** デバッグ：即時停止。回転 0・全カバー閉・AUT も止める。 */
+function snapStop(): void {
+  state = snapToStop(state, params);
+  autoState = AUTO_IDLE;
+  input = { power: false, brake: false, keys: [...manualKeys] };
+  startButton.disabled = false;
+  autoButton.disabled = program === null;
+  stopButton.disabled = true;
+}
+
 function updateReadout(): void {
   const rps = state.drive.rps;
   const steady = nominalRps() * (1 - params.drive.slip);
@@ -237,6 +265,8 @@ songSelect.addEventListener('change', rebuildProgram);
 startButton.addEventListener('click', () => void start());
 autoButton.addEventListener('click', () => void startAutoplay());
 stopButton.addEventListener('click', stop);
+snapSteadyButton.addEventListener('click', () => void snapSteady());
+snapStopButton.addEventListener('click', snapStop);
 window.addEventListener('keydown', (e) => {
   if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
   const pos = KEYBOARD.indexOf(e.key);

@@ -42,7 +42,42 @@ const viewCanvas = $<HTMLCanvasElement>('#view');
 const buildingCheck = $<HTMLInputElement>('#building');
 const seeThroughCheck = $<HTMLInputElement>('#seethrough');
 
-const KEYBOARD = ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', "'", ']'];
+/**
+ * 鍵盤に割り当てるキー（低い音から）。文字ではなく物理キーの位置（KeyboardEvent.code）で判定する。
+ * e.key だと日本語 IME がオンのとき 'Process' になり、Shift／CapsLock で大文字にもなって一致しない。
+ */
+const KEYBOARD: { code: string; label: string }[] = [
+  { code: 'KeyA', label: 'A' },
+  { code: 'KeyS', label: 'S' },
+  { code: 'KeyD', label: 'D' },
+  { code: 'KeyF', label: 'F' },
+  { code: 'KeyG', label: 'G' },
+  { code: 'KeyH', label: 'H' },
+  { code: 'KeyJ', label: 'J' },
+  { code: 'KeyK', label: 'K' },
+  { code: 'KeyL', label: 'L' },
+  { code: 'Semicolon', label: ';' },
+  { code: 'Quote', label: "'" },
+  // JIS 配列で「:」の右の「]」。US 配列では Enter の左の「\」。
+  { code: 'Backslash', label: ']' },
+];
+const keyPos = (code: string): number => KEYBOARD.findIndex((k) => k.code === code);
+
+/** ボタンに出す文字を、実際のキー配列に合わせる（Keyboard Map API がある Chromium 系のみ）。 */
+async function loadKeyLabels(): Promise<void> {
+  const kb = (navigator as Navigator & { keyboard?: { getLayoutMap(): Promise<Map<string, string>> } }).keyboard;
+  if (!kb) return;
+  try {
+    const map = await kb.getLayoutMap();
+    for (const k of KEYBOARD) {
+      const ch = map.get(k.code);
+      if (ch) k.label = ch.toUpperCase();
+    }
+    keyButtons.forEach((b, pos) => (b.innerHTML = keyButtonHtml(keyOrder[pos]!, pos)));
+  } catch {
+    // 取れなければ既定の表記のまま。
+  }
+}
 
 let machine: Machine = buildMachine(PRESETS[0]!);
 let params: MachineParams = DEFAULT_MACHINE_PARAMS;
@@ -70,6 +105,12 @@ function setKey(sirenIndex: number, down: boolean): void {
   keyButtons[pos]?.classList.toggle('down', down);
 }
 
+function keyButtonHtml(sirenIndex: number, pos: number): string {
+  const siren = machine.sirens[sirenIndex]!;
+  const hz = sirenFrequency(machine, siren, nominalRps());
+  return `<b>${formatDegree(siren.degree)}</b><i>${hz.toFixed(0)} Hz · ${KEYBOARD[pos]?.label ?? ''}</i>`;
+}
+
 function rebuildMachine(): void {
   const spec = PRESETS.find((p) => p.id === presetSelect.value) ?? PRESETS[0]!;
   machine = buildMachine(spec);
@@ -89,10 +130,8 @@ function rebuildMachine(): void {
     .map((s) => s.index);
   keysBox.replaceChildren();
   keyButtons = keyOrder.map((index, pos) => {
-    const siren = machine.sirens[index]!;
     const b = document.createElement('button');
-    const hz = sirenFrequency(machine, siren, nominalRps());
-    b.innerHTML = `<b>${formatDegree(siren.degree)}</b><i>${hz.toFixed(0)} Hz · ${KEYBOARD[pos] ?? ''}</i>`;
+    b.innerHTML = keyButtonHtml(index, pos);
     const down = (e: Event) => {
       e.preventDefault();
       setKey(index, true);
@@ -267,17 +306,18 @@ autoButton.addEventListener('click', () => void startAutoplay());
 stopButton.addEventListener('click', stop);
 snapSteadyButton.addEventListener('click', () => void snapSteady());
 snapStopButton.addEventListener('click', snapStop);
+// 同時押しは、キーごとに keydown／keyup を独立に追うだけで成り立つ（setKey はサイレンごと）。
 window.addEventListener('keydown', (e) => {
-  if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
-  const pos = KEYBOARD.indexOf(e.key);
-  const index = keyOrder[pos];
-  if (index !== undefined) {
-    e.preventDefault();
-    setKey(index, true);
-  }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const index = keyOrder[keyPos(e.code)];
+  if (index === undefined) return;
+  // 押しっぱなしの自動リピートでも既定動作（select の項目送りなど）は止める。
+  e.preventDefault();
+  if (!e.repeat) setKey(index, true);
 });
+// keyup は修飾キーの有無にかかわらず離す（押している途中で Cmd などを押しても押されたままにしない）。
 window.addEventListener('keyup', (e) => {
-  const index = keyOrder[KEYBOARD.indexOf(e.key)];
+  const index = keyOrder[keyPos(e.code)];
   if (index !== undefined) setKey(index, false);
 });
 window.addEventListener('blur', () => {
@@ -291,4 +331,5 @@ window.addEventListener('resize', () => view.resize());
 
 rebuildMachine();
 renderTables();
+void loadKeyLabels();
 requestAnimationFrame(frame);

@@ -17,6 +17,7 @@
 | [0010](0010-milder-cover-bounce.md) | 開閉カバーの揺れを、聴いた印象で控えめにする | 採用 |
 | [0011](0011-songs-as-voices.md) | 曲は数字譜の声部の重ね合わせで書く（MIDI は入れない） | 採用 |
 | [0012](0012-fixed-formants.md) | 固定の共鳴（フォルマント）を入れる | 採用 |
+| [0013](0013-furusato-10b-recording.md) | 「ふるさと」の録音（10B）の所見を記録し、モデルは変えない | 採用 |
 
 `docs/music-siren-project.md`（調査メモ）と `docs/handoff-2026-10-28.md`（引き継ぎ）は ADR 以前の文書として残す。
 内容が ADR と食い違うときは ADR を優先する。

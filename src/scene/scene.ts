@@ -297,9 +297,9 @@ export class SirenScene {
     for (const s of this.sirens) {
       const turns = state.shaftTurns[s.shaftIndex] ?? 0;
       s.impeller.rotation.x = turns * Math.PI * 2;
-      const open = state.covers[s.sirenIndex] ?? 0;
-      // 閉：板が窓の上（回転 0）。開：半ピッチ回って板が窓の間に来る。
-      s.openingCover.rotation.x = (open * Math.PI) / s.ports;
+      const angle = state.coverAngles[s.sirenIndex] ?? 0;
+      // 閉：板が窓の上（角度 0）。角度 1（ストッパー）で半ピッチ回って板が窓の間に来る。
+      s.openingCover.rotation.x = (angle * Math.PI) / s.ports;
     }
     if (this.motorRotor) {
       // モーター軸は直結の軸（変速比 1）と同じ位相

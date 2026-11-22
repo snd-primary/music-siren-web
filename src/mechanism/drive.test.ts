@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_DRIVE_PARAMS,
+  IGA_DRIVE_PARAMS,
   INITIAL_DRIVE_STATE,
+  TOKIWA_10B_DRIVE_PARAMS,
   motorTorque,
   steadyStateRps,
   stepDrive,
@@ -46,38 +48,77 @@ describe('駆動系', () => {
     expect(motorTorque(1, P)).toBe(0);
   });
 
-  it('起動：定常の 2% 以内に入るまで 4.5〜6.5 秒（トキハ本店の映像では約 5.4 秒）', () => {
-    const target = steadyStateRps(P);
-    const t = runUntil(INITIAL_DRIVE_STATE, { power: true, brake: false, openSum: 0 }, P, (s) => s.rps >= target * 0.98);
-    expect(t).toBeGreaterThanOrEqual(4.5);
-    expect(t).toBeLessThanOrEqual(6.5);
+  it('既定は伊賀機', () => {
+    expect(P).toBe(IGA_DRIVE_PARAMS);
   });
 
-  it('起動のグライドはほぼ一定の加速（トキハ：2.2〜5.4 秒で 0.20/s）', () => {
-    // 定常の 40% と 90% に達する時刻の間の平均加速度
+  it('伊賀機：定常は公称の 0.98694 倍（映像の実測）', () => {
+    expect(steadyStateRps(P) / 60).toBeCloseTo(0.98694, 3);
+  });
+
+  it('伊賀機：起動から定常の 2% 以内に入るまで 11〜12.5 秒（映像では START 約 2.0 秒 → 約 13.6 秒）', () => {
+    const target = steadyStateRps(P);
+    const t = runUntil(INITIAL_DRIVE_STATE, { power: true, brake: false, openSum: 0 }, P, (s) => s.rps >= target * 0.98);
+    expect(t).toBeGreaterThanOrEqual(11);
+    expect(t).toBeLessThanOrEqual(12.5);
+  });
+
+  it('伊賀機：起動のグライドはほぼ一定の加速（映像：8〜12 秒で約 0.09/s）', () => {
     const sync = synchronousRps(P);
     let s: DriveState = INITIAL_DRIVE_STATE;
     let t40 = -1;
     let t90 = -1;
-    for (let t = 0; t < 10 && t90 < 0; t += DT) {
+    for (let t = 0; t < 20 && t90 < 0; t += DT) {
       s = stepDrive(s, { power: true, brake: false, openSum: 0 }, P, DT);
       if (t40 < 0 && s.rps >= 0.4 * sync) t40 = t;
       if (s.rps >= 0.9 * sync) t90 = t;
     }
     const slope = 0.5 / (t90 - t40);
-    expect(slope).toBeGreaterThan(0.16);
-    expect(slope).toBeLessThan(0.24);
+    expect(slope).toBeGreaterThan(0.08);
+    expect(slope).toBeLessThan(0.1);
   });
 
-  it('停止：電源断＋ブレーキで 8〜10 秒で止まる', () => {
+  it('伊賀機：電源断から映像の惰性をなぞる（10 秒で 0.76、20 秒で 0.61、24 秒で 0.56）', () => {
+    // 映像：40.3 秒で電源断。50.1 秒 0.758、60.1 秒 0.606、64.2 秒 0.558（同期回転数比）
+    const sync = synchronousRps(P);
+    let s: DriveState = { rps: steadyStateRps(P) };
+    const at = new Map<number, number>();
+    for (let i = 1; i <= 24000; i += 1) {
+      s = stepDrive(s, { power: false, brake: true, openSum: 0 }, P, DT);
+      if (i % 1000 === 0) at.set(i / 1000, s.rps / sync);
+    }
+    expect(at.get(10)).toBeCloseTo(0.758, 2);
+    expect(at.get(20)).toBeCloseTo(0.606, 2);
+    expect(at.get(24)).toBeCloseTo(0.558, 2);
+  });
+
+  it('伊賀機：ブレーキが劣化しているので、止まるまで 2〜4 分かかる', () => {
     const t = runUntil({ rps: steadyStateRps(P) }, { power: false, brake: true, openSum: 0 }, P, (s) => s.rps <= 0);
-    expect(t).toBeGreaterThanOrEqual(8);
-    expect(t).toBeLessThanOrEqual(10);
+    expect(t).toBeGreaterThan(120);
+    expect(t).toBeLessThan(240);
   });
 
-  it('ブレーキ無しの惰性はずっと長い（1分以上）', () => {
-    const t = runUntil({ rps: steadyStateRps(P) }, { power: false, brake: false, openSum: 0 }, P, (s) => s.rps <= 0, 120);
-    expect(t).toBeGreaterThan(60);
+  it('ブレーキが効けば止まるのは早くなる（劣化具合のパラメータ）', () => {
+    const worn = runUntil({ rps: steadyStateRps(P) }, { power: false, brake: true, openSum: 0 }, P, (s) => s.rps <= 0);
+    const fresh = runUntil({ rps: steadyStateRps(P) }, { power: false, brake: true, openSum: 0 }, { ...P, brakeTorque: 0.6 }, (s) => s.rps <= 0);
+    expect(fresh).toBeLessThan(worn / 5);
+  });
+
+  describe('トキハ本店（10B）', () => {
+    const T = TOKIWA_10B_DRIVE_PARAMS;
+
+    it('起動：定常の 2% 以内に入るまで 4.5〜6.5 秒（映像では約 5.4 秒）', () => {
+      const target = steadyStateRps(T);
+      const t = runUntil(INITIAL_DRIVE_STATE, { power: true, brake: false, openSum: 0 }, T, (s) => s.rps >= target * 0.98);
+      expect(t).toBeGreaterThanOrEqual(4.5);
+      expect(t).toBeLessThanOrEqual(6.5);
+    });
+
+    it('停止：電源断＋ブレーキで 8〜10 秒（説明書）', () => {
+      const t = runUntil({ rps: steadyStateRps(T) }, { power: false, brake: true, openSum: 0 }, T, (s) => s.rps <= 0);
+      expect(t).toBeGreaterThanOrEqual(8);
+      expect(t).toBeLessThanOrEqual(10);
+    });
   });
 
   it('カバーが開くほど定常回転数がわずかに下がる（仮説の結合）', () => {

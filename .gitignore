@@ -21,3 +21,6 @@ dist/
 *.flac
 *.ogg
 *.mp4
+
+# Python
+__pycache__/

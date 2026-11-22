@@ -20,8 +20,11 @@ export interface AutoParams {
   readonly tailSec: number;
 }
 
-/** 説明書の「10〜15 秒」より短め。トキハの映像では約 5 秒で定常なので 8 秒あれば十分。 */
-export const DEFAULT_AUTO_PARAMS: AutoParams = { leadInSec: 8, tailSec: 1.5 };
+/**
+ * 伊賀機の映像：START（約 2.0 秒）から最初の音（17.8 秒）まで 15.8 秒。説明書の「10〜15 秒」とほぼ合う。
+ * 最後の音の終わりから電源断まで約 0.9 秒。
+ */
+export const DEFAULT_AUTO_PARAMS: AutoParams = { leadInSec: 15.8, tailSec: 0.9 };
 
 export const AUTO_IDLE: AutoState = { phase: 'idle', t: 0 };
 

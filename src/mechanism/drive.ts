@@ -3,12 +3,14 @@
 // 2極の三相誘導電動機が、歯車で剛結された全サイレンの羽根車を回す。
 // 慣性と、モーターのトルク特性と、羽根車の空気負荷と、電磁ブレーキで回転数の時間変化が決まる。
 //
-// 根拠：
-//   起動：トキハ本店（10B）の映像では、START から約 5 秒でほぼ一定の加速で定常に達し、
-//         最後に急に止まる（直線的なグライド）。説明書の「起動後約 10〜15 秒たってから演奏」は
-//         演奏前の待ち時間で、回転が上がりきる時間ではない。
-//   停止：説明書では電源断から 8〜10 秒で羽根車が止まる（電磁ブレーキ）。
-//   滑り：トキハの録音では公称値の 0.962 倍（滑り 3.8%）。
+// 根拠（docs/adr/0003-iga-drive-from-video.md）：
+//   伊賀機の映像（起動〜演奏〜停止が1本に入っている）から、全音の比 r(t) を tools/track-speed.py で追い、
+//   このモデルを最小二乗で当てはめた。
+//   起動：START から約 12 秒、ほぼ一定の加速（約 0.09/s）で定常に達する。説明書の「10〜15 秒」と合う。
+//   停止：電源断のあとの減速は空気負荷（回転数の2乗）でほぼ説明でき、ブレーキはごく弱い。
+//         説明書の「8〜10 秒」とは合わない。YMSHA の助言：停止時間はブレーキの劣化具合による。
+//   滑り：定常で公称の 0.98694 倍（滑り 1.31%）。
+//   トキハ本店（10B）の映像の当てはめ（起動約 5 秒、滑り 3.8%）は TOKIWA_10B_DRIVE_PARAMS に残す。
 //
 // トルクはすべて「モーターの最大トルク = 1」の無次元で扱い、慣性は時定数 [s] で与える。
 //   dx/dt = (T_motor(x) − T_load(x) − T_brake) / inertia
@@ -21,7 +23,7 @@ export interface DriveParams {
   readonly supplyHz: number;
   /** 極数。実機は 2。 */
   readonly poles: number;
-  /** 定常滑り（全カバー閉）。実機の値は伊賀の録音から逆算する予定。 */
+  /** 定常滑り（全カバー閉）。 */
   readonly slip: number;
   /** 起動トルク（最大トルク比）。2重籠形なので大きい。 */
   readonly startTorque: number;
@@ -29,7 +31,7 @@ export interface DriveParams {
   readonly kneeSlip: number;
   /** 慣性の時定数 [s]：J·ωs / Tmax。起動時間をほぼ決める。 */
   readonly inertia: number;
-  /** 電磁ブレーキのトルク（最大トルク比）。停止時間をほぼ決める。 */
+  /** 電磁ブレーキのトルク（最大トルク比）。停止時間をほぼ決める。劣化すると小さくなる。 */
   readonly brakeTorque: number;
   /** 軸受などの摩擦トルク（最大トルク比）。ブレーキ無しでも最後は止まる。 */
   readonly friction: number;
@@ -37,7 +39,24 @@ export interface DriveParams {
   readonly openLoad: number;
 }
 
-export const DEFAULT_DRIVE_PARAMS: DriveParams = {
+/**
+ * 伊賀機（8音・350φ・60Hz）。映像の起動（約 2.0〜14 秒）と停止後の惰性（40.3〜64.5 秒）に当てはめた値。
+ * 残差：起動の中央値 0.0025、惰性の rms 0.0011（同期回転数比）。
+ */
+export const IGA_DRIVE_PARAMS: DriveParams = {
+  supplyHz: 60,
+  poles: 2,
+  slip: 0.0131,
+  startTorque: 0.64,
+  kneeSlip: 0.054,
+  inertia: 8.7,
+  brakeTorque: 0.0165,
+  friction: 0,
+  openLoad: 0.02,
+};
+
+/** トキハ本店（10B）。映像の起動（約 5 秒）に当てはめた値。停止は映像に無く、説明書の 8〜10 秒に合わせた。 */
+export const TOKIWA_10B_DRIVE_PARAMS: DriveParams = {
   supplyHz: 60,
   poles: 2,
   slip: 0.038,
@@ -48,6 +67,9 @@ export const DEFAULT_DRIVE_PARAMS: DriveParams = {
   friction: 0.01,
   openLoad: 0.02,
 };
+
+/** 既定は伊賀機（モデリングの対象を伊賀機に絞る。docs/adr/0001-model-iga-only.md）。 */
+export const DEFAULT_DRIVE_PARAMS: DriveParams = IGA_DRIVE_PARAMS;
 
 export interface DriveState {
   /** モーター軸の回転数 [rps]。 */

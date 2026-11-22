@@ -105,3 +105,27 @@ describe('自動運転', () => {
     expect(r.input).toEqual({ power: false, brake: false, keys: [false, true, false] });
   });
 });
+
+describe('開閉の速さの限界', () => {
+  it('収録曲は伊賀機で、同じサイレンを 1/3 秒より短い間隔で開き直さない（YMSHA：1秒に2〜3回まで）', () => {
+    for (const song of SONGS) {
+      const program = compileSong(song, iga);
+      for (const track of program.tracks) {
+        for (let k = 1; k < track.segments.length; k += 1) {
+          const gap = track.segments[k]![0] - track.segments[k - 1]![0];
+          expect(gap, `${song.id} siren ${track.sirenIndex} at ${track.segments[k]![0].toFixed(2)}s`).toBeGreaterThanOrEqual(1 / 3);
+        }
+      }
+    }
+  });
+});
+
+describe('自動運転の待ち時間', () => {
+  it('伊賀機は、演奏が始まるまでに定常回転数の 99% に達している', async () => {
+    const { DEFAULT_DRIVE_PARAMS, INITIAL_DRIVE_STATE, stepDrive, steadyStateRps } = await import('./drive');
+    let s = INITIAL_DRIVE_STATE;
+    const dt = 0.001;
+    for (let t = 0; t < DEFAULT_AUTO_PARAMS.leadInSec; t += dt) s = stepDrive(s, { power: true, brake: false, openSum: 0 }, DEFAULT_DRIVE_PARAMS, dt);
+    expect(s.rps / steadyStateRps(DEFAULT_DRIVE_PARAMS)).toBeGreaterThan(0.99);
+  });
+});

@@ -41,7 +41,7 @@ export class AudioEngine {
   }
 
   update(state: MachineState): void {
-    const msg: ProcessorMessage = { type: 'target', target: { motorRps: state.drive.rps, covers: state.covers } };
+    const msg: ProcessorMessage = { type: 'target', target: { motorRps: state.drive.rps, covers: state.covers, surges: state.surges } };
     this.node.port.postMessage(msg);
   }
 }

@@ -1,6 +1,6 @@
 # 0006. 気流のノイズを帯域制限し、出力に余裕を持たせる
 
-- 状態：採用（[0004](0004-iga-sound-from-video.md) の jet・gain を置き換え）
+- 状態：採用（[0004](0004-iga-sound-from-video.md) の jet・gain を置き換え。jet は [0012](0012-fixed-formants.md) で置き換え）
 - 日付：2026-11-22
 
 ## 背景

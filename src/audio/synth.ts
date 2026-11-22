@@ -16,12 +16,23 @@
 // 開閉カバーの揺れ（開いた直後の山と、開いている間のゆっくりした揺れ）と、空気室の圧の山は
 // 機構側（mechanism/simulation.ts）で作り、開度 covers と流量の倍率 surges として受け取る
 // （docs/adr/0008-cover-bounce.md）。閉じているカバーは揺れない。
+// 固定の共鳴（フォルマント）：音程によらず同じ周波数に山と谷がある（伊賀の映像の 4 音の倍音を絶対周波数で
+// 並べると揃う。580 Hz の山と 1300 Hz の谷、docs/adr/0012-fixed-formants.md）。サイレン本体や建屋の
+// 共鳴と考え、全サイレンの和に RBJ のピーキング・フィルタを直列に掛ける。気流のノイズには掛けない
+// （映像のノイズには 1300 Hz の谷が見えない）。
 
 export interface SynthSirenConfig {
   /** ポート数。 */
   readonly ports: number;
   /** 所属軸の変速比（数値）。 */
   readonly ratio: number;
+}
+
+/** 固定の共鳴 1 つ（RBJ のピーキング・フィルタ）。gainDb が負なら谷（反共鳴）。 */
+export interface Formant {
+  readonly hz: number;
+  readonly gainDb: number;
+  readonly q: number;
 }
 
 export interface SynthConfig {
@@ -43,21 +54,39 @@ export interface SynthConfig {
   readonly jet: number;
   /** 気流のノイズにかけるローパス（1 次を 2 段）のカットオフ [Hz]。高域のザラつきを抑える。 */
   readonly jetCutoffHz: number;
+  /** 固定の共鳴（フォルマント）。全サイレンの音の和に直列に掛ける（気流のノイズには掛けない）。 */
+  readonly formants: readonly Formant[];
 }
 
 export const DEFAULT_SYNTH: Omit<SynthConfig, 'sampleRate' | 'sirens' | 'nominalRps'> = {
-  duty: 0.315,
-  edge: 0.16,
+  // 伊賀の映像の 4 音（2・3・5・6）の倍音に、フォルマントと一緒に当てはめた（0012）。
+  duty: 0.175,
+  edge: 0.175,
   // 伊賀の映像：閉じたカバーからの漏れは全開より約 −19 dB（自動利得の分を補正）。閉じている間は圧がたまり
   // （surge 0.5）、開いても重なりは停止位置の 0.85 なので、その分を見込んで 0.07 にした。
   leak: 0.07,
-  radiationCutoffHz: 300,
+  // 高域の減り方はフォルマントが受け持つので、ローパスはほぼ外す（0012）。
+  radiationCutoffHz: 5000,
   gain: 0.12, // 単音の全開で約 −20 dBFS。4 音の和音でもピークが 0.75 未満で、tanh でほとんど歪まない
   // 伊賀の映像：全開の音に対するノイズの総量は約 −12 dB（周囲の雑音を含む上限）。近い距離の録音なので、
   // 控えめに −18 dB にした。
-  jet: 0.28,
+  jet: 0.58,
   jetCutoffHz: 2000,
+  formants: [
+    { hz: 580, gainDb: 18, q: 3 },
+    { hz: 1300, gainDb: -30, q: 1 },
+  ],
 };
+
+/** RBJ のピーキング・フィルタの係数（a0 で正規化）。[b0, b1, b2, a1, a2]。 */
+export function peakingCoefficients(f: Formant, sampleRate: number): [number, number, number, number, number] {
+  const A = 10 ** (f.gainDb / 40);
+  const w0 = (2 * Math.PI * f.hz) / sampleRate;
+  const alpha = Math.sin(w0) / (2 * f.q);
+  const cos = Math.cos(w0);
+  const a0 = 1 + alpha / A;
+  return [(1 + alpha * A) / a0, (-2 * cos) / a0, (1 - alpha * A) / a0, (-2 * cos) / a0, (1 - alpha / A) / a0];
+}
 
 /** 窓孔の重なり（0〜1）。ph は 0〜1 の位相。 */
 export function portOpening(ph: number, duty: number, edge: number): number {
@@ -91,6 +120,9 @@ export class SirenSynth {
   private noiseState = 0x9e3779b9;
   private readonly surge: Float64Array;
   private readonly surgeTarget: Float64Array;
+  /** フォルマントの係数（5 個ずつ）と状態（転置直接形 II、2 個ずつ）。 */
+  private readonly formantCoef: Float64Array;
+  private readonly formantState: Float64Array;
 
   constructor(private readonly config: SynthConfig) {
     const n = config.sirens.length;
@@ -106,6 +138,8 @@ export class SirenSynth {
     this.coverSmooth = 1 - Math.exp(-1 / (0.006 * config.sampleRate));
     this.lowpass = 1 - Math.exp((-2 * Math.PI * config.radiationCutoffHz) / config.sampleRate);
     this.jetLowpass = 1 - Math.exp((-2 * Math.PI * config.jetCutoffHz) / config.sampleRate);
+    this.formantCoef = new Float64Array(config.formants.flatMap((f) => peakingCoefficients(f, config.sampleRate)));
+    this.formantState = new Float64Array(config.formants.length * 2);
   }
 
   setTarget(target: SynthTarget): void {
@@ -160,7 +194,16 @@ export class SirenSynth {
       this.lowpassState += (sum - this.lowpassState) * this.lowpass;
       this.jetState += (air - this.jetState) * this.jetLowpass;
       this.jetState2 += (this.jetState - this.jetState2) * this.jetLowpass;
-      out[n] = Math.tanh((this.lowpassState + this.jetState2) * gain * 4);
+      let y = this.lowpassState;
+      const fc = this.formantCoef;
+      const fs = this.formantState;
+      for (let c = 0, z = 0; c < fc.length; c += 5, z += 2) {
+        const x = y;
+        y = (fc[c] as number) * x + (fs[z] as number);
+        fs[z] = (fc[c + 1] as number) * x - (fc[c + 3] as number) * y + (fs[z + 1] as number);
+        fs[z + 1] = (fc[c + 2] as number) * x - (fc[c + 4] as number) * y;
+      }
+      out[n] = Math.tanh((y + this.jetState2) * gain * 4);
     }
   }
 }

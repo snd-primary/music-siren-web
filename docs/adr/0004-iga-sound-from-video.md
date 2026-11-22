@@ -1,6 +1,6 @@
 # 0004. 伊賀機の音の既定値を映像から決める
 
-- 状態：採用（jet・gain は [0006](0006-jet-noise-and-headroom.md) で置き換え）
+- 状態：採用（jet・gain は [0006](0006-jet-noise-and-headroom.md)、duty・edge・radiationCutoffHz は [0012](0012-fixed-formants.md) で置き換え）
 - 日付：2026-11-22
 
 ## 背景

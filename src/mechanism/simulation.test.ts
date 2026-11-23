@@ -114,6 +114,28 @@ describe('開閉カバー（伊賀の映像の立ち上がりに当てはめた�
   });
 });
 
+describe('閉じる側（伊賀の映像、docs/adr/0014-cover-close-and-no-residual-pressure.md）', () => {
+  const dt = 0.0005;
+  const keys = machine.sirens.map((_, i) => i === 2);
+
+  it('全開から 30〜70 ms で閉じる', () => {
+    expect(P.cover.closeTime).toBeGreaterThanOrEqual(0.03);
+    expect(P.cover.closeTime).toBeLessThanOrEqual(0.07);
+  });
+
+  it('閉じきってから 100 ms で圧はたまり終わり（95% 以上）、閉じたあとの漏れ音は平ら（残圧の余韻は無い）', () => {
+    let s = initialMachineState(machine);
+    for (let k = 0; k < Math.round(1 / dt); k += 1) s = stepMachine(machine, s, { ...idle, keys }, P, dt);
+    while ((s.covers[2] ?? 0) > 0) s = stepMachine(machine, s, idle, P, dt);
+    for (let k = 0; k < Math.round(0.1 / dt); k += 1) s = stepMachine(machine, s, idle, P, dt);
+    const early = s.surges[2] ?? 0;
+    expect(early).toBeGreaterThan(P.cover.surge * 0.95);
+    for (let k = 0; k < Math.round(0.5 / dt); k += 1) s = stepMachine(machine, s, idle, P, dt);
+    // 漏れの流量は (1 + surge) に比例する。100 ms 後から 0.5 秒の変化は 0.3 dB 未満。
+    expect(20 * Math.log10((1 + (s.surges[2] ?? 0)) / (1 + early))).toBeLessThan(0.3);
+  });
+});
+
 describe('開閉の速さの限界（1秒に3回まで）', () => {
   it('閉じてすぐ通電し直しても、前に開き始めてから minCycle 経つまで開かない', () => {
     const dt = 0.001;

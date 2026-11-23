@@ -13,7 +13,10 @@
 //   通電を切るとスプリングで一定速度で戻り、ストッパーに押し付けられて止まる。閉じている間は揺れない。
 //
 // 空気室の圧の山（surge）：閉じている間に羽根車が空気室の圧を上げ、開いた瞬間にそれが抜ける。
-//   流量の倍率として 1 + surge を合成に渡す。
+//   流量の倍率として 1 + surge を合成に渡す。圧はカバーが閉じきるまでにほぼたまり終わるので、閉じたあとの
+//   漏れ音は平ら（docs/adr/0014-cover-close-and-no-residual-pressure.md）。
+// v1 の「残圧による余韻」（閉じたあとに空気だめの圧が抜けるまで鳴る）は入れない。羽根車がサイレンごとに
+//   回り続けるので、閉じると圧は抜けずにたまる。伊賀の映像にも閉じたあとの余韻は無い（0014）。
 
 import { DEFAULT_DRIVE_PARAMS, INITIAL_DRIVE_STATE, steadyStateRps, stepDrive, type DriveParams, type DriveState } from './drive';
 import type { Machine } from './machine';
@@ -48,9 +51,11 @@ export interface CoverParams {
 /**
  * 伊賀の映像の立ち上がりに当てはめた値（docs/adr/0009-cover-stopper.md）から、聴いて揺れを控えめにした値
  * （docs/adr/0010-milder-cover-bounce.md）。当てはめの値は restAngle 0.85・bounceDamping 0.094・wander 0.05。
+ * 閉じる速さと圧のたまり方は、映像の閉じる側に当てはめた（docs/adr/0014-cover-close-and-no-residual-pressure.md）。
  */
 export const DEFAULT_COVER_PARAMS: CoverParams = {
-  closeTime: 0.12,
+  // 伊賀の映像：閉じると 20 ms で −19 dB、30〜40 ms で漏れの大きさまで落ちる（0014）。
+  closeTime: 0.05,
   minCycle: 1 / 3,
   restAngle: 0.9,
   bounceHz: 6.45,
@@ -59,7 +64,7 @@ export const DEFAULT_COVER_PARAMS: CoverParams = {
   wander: 0.03,
   surge: 0.5,
   surgeReleaseSec: 0.29,
-  surgeFillSec: 0.15,
+  surgeFillSec: 0.03, // 閉じきるまでにたまり終わる（0014）
 };
 
 export interface MachineParams {

@@ -19,6 +19,7 @@
 | [0012](0012-fixed-formants.md) | 固定の共鳴（フォルマント）を入れる | 採用 |
 | [0013](0013-furusato-10b-recording.md) | 「ふるさと」の録音（10B）の所見を記録し、モデルは変えない | 採用 |
 | [0014](0014-cover-close-and-no-residual-pressure.md) | v1 の残圧は移植せず、閉じる側を伊賀の映像に当てはめる | 採用 |
+| [0015](0015-furusato.md) | ふるさとを入れる（旋律は公開楽譜から、低い 5・7 はオクターブ上に移す） | 採用 |
 
 `docs/music-siren-project.md`（調査メモ）と `docs/handoff-2026-10-28.md`（引き継ぎ）は ADR 以前の文書として残す。
 内容が ADR と食い違うときは ADR を優先する。

@@ -7,6 +7,7 @@ import { PRESETS } from '../presets';
 import { SONGS } from '../songs';
 import { maxPolyphony, parseScore, parseVoices, songLengthBeats, unisonOverlaps } from '../songs/types';
 import { IEJI } from '../songs/ieji';
+import { FURUSATO } from '../songs/furusato';
 
 const iga = buildMachine(PRESETS[0]!);
 
@@ -61,6 +62,12 @@ describe('曲データ', () => {
   });
   it.each(SONGS)('$title：同時に鳴るのは 3 音まで（伊賀の映像の家路では 2〜3 音）', (song) => {
     expect(maxPolyphony(song.events)).toBeLessThanOrEqual(3);
+  });
+  it('ふるさとは 3/4 拍子の 16 小節（＋余韻 1 小節）で、2 声', () => {
+    expect(songLengthBeats(FURUSATO)).toBe(47); // 16 小節目の 2 拍目まで
+    expect(maxPolyphony(FURUSATO.events)).toBe(2);
+    // 伊賀機に無い低い 5̣・7̣ はオクターブ上に移してある
+    expect(missingDegrees(FURUSATO, iga)).toEqual([]);
   });
   it('家路は和音で鳴る（2 声）', () => {
     expect(maxPolyphony(IEJI.events)).toBe(2);

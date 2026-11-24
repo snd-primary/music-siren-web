@@ -22,6 +22,7 @@
 | [0015](0015-furusato.md) | ふるさとを入れる（旋律は公開楽譜から、低い 5・7 はオクターブ上に移す） | 採用 |
 | [0016](0016-cover-narrows-window.md) | 開閉カバーは開口の倍率ではなく、窓孔の幅を変える | 採用 |
 | [0017](0017-3d-from-figures-and-video.md) | 3D を説明書の図と伊賀の映像から作り直し、リンク機構を機構モデルに入れる | 採用 |
+| [0018](0018-deploy-cloudflare-workers.md) | Cloudflare Workers にデプロイする（Workers Builds、静的アセットのみ） | 採用 |
 
 `docs/music-siren-project.md`（調査メモ）と `docs/handoff-2026-10-28.md`（引き継ぎ）は ADR 以前の文書として残す。
 内容が ADR と食い違うときは ADR を優先する。

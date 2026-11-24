@@ -23,6 +23,10 @@ pnpm typecheck  # tsc --noEmit
 pnpm check      # typecheck + test + audit
 ```
 
+## デプロイ
+
+Cloudflare Workers の静的アセットとして `dist/` を配信します（`wrangler.jsonc`、ADR 0018）。Workers Builds でリポジトリを接続してあり、`main` への push でデプロイされます。wrangler は依存に入れていません。
+
 ## 依存パッケージの扱い（サプライチェーン対策）
 
 `pnpm-workspace.yaml` で次を有効にしています。

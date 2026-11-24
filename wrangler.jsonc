@@ -1,0 +1,9 @@
+// Cloudflare Workers（静的アセットのみ。Worker のスクリプトは無い）
+// `pnpm build` の出力 dist/ をそのまま配信する。
+{
+  "name": "music-siren-web",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./dist"
+  }
+}

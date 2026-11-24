@@ -1,168 +1,124 @@
-// Three.js による手続き生成。外部モデルファイルは使わない。
-// 配置は layout.ts（純粋関数）、動きは mechanism/simulation.ts の MachineState だけを読む。
-// YAMAHA のロゴ・銘板は再現しない。
+// Three.js による手続き生成。外部モデルファイルも外部の画像も使わない。
+// 配置は layout.ts（純粋関数）、動きは mechanism/simulation.ts の MachineState だけを読む：
+//   軸の位相 → 羽根車・カップリング・歯車、開閉カバーの角度 → 開閉カバー・レバー・アマチュア・スプリング
+//   （mechanism/linkage.ts）。音も同じ状態を読むので、揺れも跳ね返りも音と同じ動きになる。
+// 部品の形は siren.ts と drivetrain.ts。YAMAHA のロゴ・銘板は再現しない。
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import type { Machine } from '../mechanism/machine';
+import { ratioToNumber } from '../mechanism/ratio';
 import type { MachineState } from '../mechanism/simulation';
-import { DIM, layoutMachine, type MachineLayout } from './layout';
+import {
+  AXIS_Y,
+  addBase,
+  addBearingUnit,
+  addBrake,
+  addBrakeCover,
+  addGearCaseCover,
+  addMagnetBox,
+  addMotor,
+  buildBuilding,
+  buildCoupling,
+  buildGears,
+  counterAngle,
+  type GearCaseParts,
+} from './drivetrain';
+import { Builder, cylX } from './geom';
+import { unwrapInputTurns } from './geartrain';
+import { DIM, layoutMachine } from './layout';
+import { createMaterials, type Materials } from './materials';
+import { bladeBlurGeometry, buildSiren, poseSiren, type SirenParts } from './siren';
 
 const MM = 0.001;
-
-const COLORS = {
-  concrete: 0x9a968c,
-  base: 0xb8b2a4,
-  drum: 0xc9c2b0,
-  drumDark: 0x5a564e,
-  window: 0x1e1c1a,
-  impeller: 0x8e8a80,
-  shaft: 0x6f6a60,
-  magnet: 0xbdb7a8,
-  motor: 0x5d6b7a,
-  brake: 0x4d4a44,
-  gear: 0x7a7266,
-  building: 0xd9dde3,
-  ground: 0x6b6b66,
-} as const;
-
-interface SirenParts {
-  readonly group: THREE.Group;
-  /** 開閉カバー。開度で軸まわりに回る。 */
-  readonly openingCover: THREE.Group;
-  /** 羽根車。軸の位相で回る。 */
-  readonly impeller: THREE.Group;
-  readonly shaftIndex: number;
-  readonly sirenIndex: number;
-  readonly ports: number;
-  readonly coverMaterials: THREE.MeshStandardMaterial[];
-}
-
-function cylinderAlongX(radius: number, length: number, material: THREE.Material, segments = 48, open = false): THREE.Mesh {
-  const g = new THREE.CylinderGeometry(radius, radius, length, segments, 1, open);
-  g.rotateZ(Math.PI / 2);
-  return new THREE.Mesh(g, material);
-}
-
-function box(x: number, y: number, z: number, material: THREE.Material): THREE.Mesh {
-  return new THREE.Mesh(new THREE.BoxGeometry(x * MM, y * MM, z * MM), material);
-}
-
-/** サイレン本体 1 台。原点が軸上の本体中心、+x が facing の向きになるように作り、呼び出し側で反転する。 */
-function buildSiren(ports: number, sirenIndex: number, shaftIndex: number): SirenParts {
-  const group = new THREE.Group();
-  const r = DIM.coverRadius * MM;
-  const len = DIM.drumLength * MM;
-  const coverMaterials: THREE.MeshStandardMaterial[] = [];
-  const mat = (color: number): THREE.MeshStandardMaterial => {
-    const m = new THREE.MeshStandardMaterial({ color, roughness: 0.75, metalness: 0.15, side: THREE.DoubleSide });
-    coverMaterials.push(m);
-    return m;
-  };
-
-  // 固定カバー：外周の円筒と、内側（軸受側）の端板。窓孔は暗い矩形で表す。
-  const fixed = new THREE.Group();
-  fixed.add(cylinderAlongX(r - 0.008, len, mat(COLORS.drum), 64, true));
-  const endPlate = new THREE.Mesh(new THREE.RingGeometry(DIM.shaftRadius * MM * 2, r - 0.008, 64), mat(COLORS.drum));
-  endPlate.rotation.y = Math.PI / 2;
-  endPlate.position.x = -len / 2;
-  fixed.add(endPlate);
-  const windowW = ((2 * Math.PI * r) / ports) * DIM.windowWidthRatio;
-  const windowH = DIM.windowHeight * MM;
-  const windowGeom = new THREE.PlaneGeometry(windowH, windowW);
-  const windowMat = new THREE.MeshStandardMaterial({ color: COLORS.window, roughness: 1, side: THREE.DoubleSide });
-  for (let i = 0; i < ports; i += 1) {
-    const a = (i / ports) * Math.PI * 2;
-    const w = new THREE.Mesh(windowGeom, windowMat);
-    // 外周面に貼る。平面の法線（+z）を半径方向 (0, cos a, sin a) に向ける
-    w.position.set(0, Math.cos(a) * (r - 0.006), Math.sin(a) * (r - 0.006));
-    w.rotation.x = a - Math.PI / 2;
-    fixed.add(w);
-  }
-  group.add(fixed);
-
-  // 開閉カバー：窓の間を覆う板が ports 枚。閉じているとき（回転 0）は板が窓の真上に来る。
-  // CylinderGeometry を rotateZ(π/2) すると、円周の角度 θ は軸まわりの角度 a = π/2 − θ に写る。
-  // 板 1 枚を a ∈ [−Δ/2, +Δ/2] に作り、窓の角度 a_i だけ回して置く。
-  const openingCover = new THREE.Group();
-  const panelTheta = ((2 * Math.PI) / ports) * (1 - DIM.windowWidthRatio);
-  const panelGeom = new THREE.CylinderGeometry(r, r, len, 12, 1, true, Math.PI / 2 - panelTheta / 2, panelTheta);
-  panelGeom.rotateZ(Math.PI / 2);
-  const panelMat = mat(COLORS.drum);
-  for (let i = 0; i < ports; i += 1) {
-    const panel = new THREE.Mesh(panelGeom, panelMat);
-    panel.rotation.x = (i / ports) * Math.PI * 2;
-    openingCover.add(panel);
-  }
-  // 外側の縁（リング）
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(r, 0.006, 8, 64), mat(COLORS.drum));
-  rim.rotation.y = Math.PI / 2;
-  rim.position.x = len / 2;
-  openingCover.add(rim);
-  const rim2 = rim.clone();
-  rim2.position.x = -len / 2;
-  openingCover.add(rim2);
-  group.add(openingCover);
-
-  // 羽根車：外側の面に背面がむき出し。円盤と放射状の羽根、中央のナット。
-  const impeller = new THREE.Group();
-  const ir = DIM.impellerRadius * MM;
-  const disc = cylinderAlongX(ir, 0.008, new THREE.MeshStandardMaterial({ color: COLORS.impeller, roughness: 0.6, metalness: 0.4 }), 64);
-  disc.position.x = len / 2 - 0.02;
-  impeller.add(disc);
-  const bladeGeom = new THREE.BoxGeometry(0.06, ir - 0.03, 0.006);
-  const bladeMat = new THREE.MeshStandardMaterial({ color: COLORS.impeller, roughness: 0.6, metalness: 0.4 });
-  for (let i = 0; i < ports; i += 1) {
-    const blade = new THREE.Mesh(bladeGeom, bladeMat);
-    blade.position.set(len / 2 - 0.055, 0, 0);
-    blade.rotation.x = (i / ports) * Math.PI * 2;
-    blade.translateY((ir - 0.03) / 2 + 0.02);
-    impeller.add(blade);
-  }
-  const nut = cylinderAlongX(0.03, 0.03, new THREE.MeshStandardMaterial({ color: COLORS.shaft, roughness: 0.5, metalness: 0.5 }), 6);
-  nut.position.x = len / 2 - 0.005;
-  impeller.add(nut);
-  group.add(impeller);
-
-  return { group, openingCover, impeller, shaftIndex, sirenIndex, ports, coverMaterials };
-}
+const TAU = Math.PI * 2;
 
 export interface SceneOptions {
   readonly showBuilding: boolean;
+  /** サイレン本体の殻（開閉カバー・固定カバー）を透かす。 */
   readonly seeThrough: boolean;
+  /** マグネットカバー・ブレーキカバー・歯車箱を外す。 */
+  readonly hideHousings: boolean;
+  /** 軸を通る縦の面で切って、手前（マグネットの反対側）の半分を取り除く（第2図のような断面）。 */
+  readonly section: boolean;
 }
+
+interface Rotor {
+  readonly object: THREE.Object3D;
+  readonly shaftIndex: number;
+}
+
+interface GearSet extends GearCaseParts {
+  readonly inShaft: number;
+  readonly outShaft: number;
+  readonly num: number;
+  readonly den: number;
+}
+
+function gcd(a: number, b: number): number {
+  return b === 0 ? Math.abs(a) : gcd(b, a % b);
+}
+
+const smoothstep = (lo: number, hi: number, x: number): number => {
+  const t = Math.min(1, Math.max(0, (x - lo) / (hi - lo)));
+  return t * t * (3 - 2 * t);
+};
 
 export class SirenScene {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.PerspectiveCamera;
   private readonly controls: OrbitControls;
+  private readonly materials: Materials;
+  private readonly sectionPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+  private readonly sun: THREE.DirectionalLight;
   private machineGroup = new THREE.Group();
   private sirens: SirenParts[] = [];
-  private motorRotor: THREE.Object3D | null = null;
+  private blurMaterials: THREE.MeshStandardMaterial[] = [];
+  private rotors: Rotor[] = [];
+  private gearSets: GearSet[] = [];
+  private shaftRatios: number[] = [];
+  private housings: THREE.Object3D | null = null;
   private building: THREE.Object3D | null = null;
-  private layout: MachineLayout | null = null;
-  private directShaftIndex = 0;
-  private options: SceneOptions = { showBuilding: false, seeThrough: false };
+  private options: SceneOptions = { showBuilding: false, seeThrough: false, hideHousings: false, section: false };
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
-    this.scene.background = new THREE.Color(0xbfd3e6);
-    this.camera = new THREE.PerspectiveCamera(40, 1, 0.05, 100);
-    this.camera.position.set(3.2, 1.6, 4.2);
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 0.95;
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.localClippingEnabled = true;
+    this.scene.background = new THREE.Color(0xc9d6e2);
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    this.scene.environmentIntensity = 0.4;
+    pmrem.dispose();
+
+    this.camera = new THREE.PerspectiveCamera(36, 1, 0.02, 60);
+    this.camera.position.set(2.4, 1.3, 3.0);
     this.controls = new OrbitControls(this.camera, canvas);
-    this.controls.target.set(0, 0.5, 0);
+    this.controls.target.set(0, AXIS_Y * MM, 0);
     this.controls.enableDamping = true;
+    this.controls.minDistance = 0.12;
+    this.controls.maxDistance = 14;
+    this.controls.maxPolarAngle = Math.PI * 0.495;
 
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x667766, 1.1);
-    this.scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xffffff, 1.6);
-    sun.position.set(4, 6, 3);
-    this.scene.add(sun);
+    this.scene.add(new THREE.HemisphereLight(0xe8f0ff, 0x8a8478, 0.45));
+    this.sun = new THREE.DirectionalLight(0xfff4e2, 2.0);
+    this.sun.position.set(2.5, 5, -4);
+    this.sun.castShadow = true;
+    this.sun.shadow.mapSize.set(4096, 4096);
+    this.sun.shadow.bias = -0.0004;
+    this.sun.shadow.normalBias = 0.004;
+    this.scene.add(this.sun);
+    this.scene.add(this.sun.target);
 
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(14, 10), new THREE.MeshStandardMaterial({ color: COLORS.ground, roughness: 1 }));
+    this.materials = createMaterials();
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(16, 16), this.materials.floor);
     ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -0.001;
+    ground.receiveShadow = true;
     this.scene.add(ground);
 
     this.scene.add(this.machineGroup);
@@ -179,133 +135,190 @@ export class SirenScene {
 
   setOptions(options: SceneOptions): void {
     this.options = options;
+    const m = this.materials;
     if (this.building) this.building.visible = options.showBuilding;
-    for (const s of this.sirens) {
-      for (const m of s.coverMaterials) {
-        m.transparent = options.seeThrough;
-        m.opacity = options.seeThrough ? 0.25 : 1;
-        m.depthWrite = !options.seeThrough;
-        m.needsUpdate = true;
-      }
+    if (this.housings) this.housings.visible = !options.hideHousings;
+    for (const mat of m.shells) {
+      mat.transparent = options.seeThrough;
+      mat.opacity = options.seeThrough ? 0.22 : 1;
+      mat.depthWrite = !options.seeThrough;
+      mat.needsUpdate = true;
     }
+    for (const mat of m.sectioned) {
+      mat.clippingPlanes = options.section ? [this.sectionPlane] : [];
+      mat.clipShadows = true;
+      mat.needsUpdate = true;
+    }
+    // 建屋の中は屋根で日が遮られるので、建屋を出したら日を正面の低い所から入れる
+    this.sun.position.set(options.showBuilding ? 1.2 : 2.5, options.showBuilding ? 2.2 : 5, options.showBuilding ? -5 : -4);
   }
 
   setMachine(machine: Machine): void {
     this.scene.remove(this.machineGroup);
-    this.machineGroup = new THREE.Group();
+    this.machineGroup.traverse((o) => {
+      if (o instanceof THREE.Mesh) o.geometry.dispose();
+    });
+    for (const mat of this.blurMaterials) mat.dispose();
+    const root = new THREE.Group();
+    root.scale.setScalar(MM);
+    this.machineGroup = root;
     this.sirens = [];
+    this.rotors = [];
+    this.gearSets = [];
+    const m = this.materials;
     const layout = layoutMachine(machine);
-    this.layout = layout;
-    this.directShaftIndex = Math.max(0, machine.shafts.findIndex((s) => s.ratio.num === s.ratio.den));
-    const g = this.machineGroup;
-    const axisY = (DIM.baseHeight + DIM.axisHeight) * MM;
+    this.shaftRatios = machine.shafts.map((s) => ratioToNumber(s.ratio));
+    const shaftIndexOf = (id: string): number => Math.max(0, machine.shafts.findIndex((s) => s.id === id));
+    const directShaft = Math.max(0, machine.shafts.findIndex((s) => s.ratio.num === s.ratio.den));
+    const sirenShaft = (sirenIndex: number | undefined): number => shaftIndexOf(machine.sirens[sirenIndex ?? 0]?.shaftId ?? '');
+    this.blurMaterials = machine.shafts.map(
+      () => new THREE.MeshStandardMaterial({ color: 0x34342f, roughness: 0.8, metalness: 0.2, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }),
+    );
+    const blurGeometry = bladeBlurGeometry();
 
-    // 基礎（左・中央・右）
-    const baseMat = new THREE.MeshStandardMaterial({ color: COLORS.base, roughness: 0.95 });
-    const bases: [number, number][] = [
-      [-(layout.centerLength / 2 + layout.leftLength / 2), layout.leftLength],
-      [0, layout.centerLength],
-      [layout.centerLength / 2 + layout.rightLength / 2, layout.rightLength],
-    ];
-    for (const [x, len] of bases) {
-      const b = box(len - 20, DIM.baseHeight, DIM.baseWidth, baseMat);
-      b.position.set(x * MM, (DIM.baseHeight / 2) * MM, 0);
-      g.add(b);
+    const fixed = new Builder();
+    const housings = new Builder();
+    const half = layout.centerLength / 2;
+    const k = layout.centerLength / DIM.centerBase8;
+
+    // ベース（左・中央・右）
+    addBase(fixed, m, -half - layout.leftLength, -half, DIM.baseWidth);
+    addBase(fixed, m, -half, half, DIM.centerBaseWidth);
+    addBase(fixed, m, half, half + layout.rightLength, DIM.baseWidth);
+
+    // 軸（回っても見た目が変わらないので 1 本で置く。回転は丸ナット・キー・カップリングで見せる）
+    // 変速歯車装置の中では、入力軸と出力軸が切れている。
+    const xs = layout.sirens.map((p) => p.x);
+    const cuts = [Math.min(...xs) - 20, DIM.center.gear * k, ...layout.extraGears.map((eg) => eg.x), Math.max(...xs) + 20].sort((a, b) => a - b);
+    for (let i = 0; i + 1 < cuts.length; i += 1) {
+      const a = cuts[i]! + (i === 0 ? 0 : 3);
+      const b = cuts[i + 1]! - (i + 2 === cuts.length ? 0 : 3);
+      fixed.add(m.steel, cylX(DIM.shaftRadius, a, b, 32), new THREE.Matrix4().makeTranslation(0, AXIS_Y, 0));
     }
 
-    // 軸（左右それぞれ 1 本に見せる）
-    const shaftMat = new THREE.MeshStandardMaterial({ color: COLORS.shaft, roughness: 0.45, metalness: 0.6 });
-    const shaft = cylinderAlongX(DIM.shaftRadius * MM, layout.totalLength * MM - 0.1, shaftMat, 24);
-    shaft.position.y = axisY;
-    g.add(shaft);
-
-    // 中央ベース：ブレーキ・モーター・変速歯車。配列表の順（左からブレーキ、モーター、歯車）。
-    const brake = box(DIM.brake.x, DIM.brake.y, DIM.brake.z, new THREE.MeshStandardMaterial({ color: COLORS.brake, roughness: 0.8 }));
-    brake.position.set(-layout.centerLength * 0.3 * MM, axisY, 0);
-    g.add(brake);
-    const motorMat = new THREE.MeshStandardMaterial({ color: COLORS.motor, roughness: 0.6, metalness: 0.3 });
-    const motor = cylinderAlongX(DIM.motor.radius * MM, DIM.motor.length * MM, motorMat, 40);
-    motor.position.set(0, axisY, 0);
-    g.add(motor);
-    const motorFoot = box(DIM.motor.length * 0.8, DIM.axisHeight, DIM.motor.radius * 1.6, motorMat);
-    motorFoot.position.set(0, (DIM.baseHeight + DIM.axisHeight / 2) * MM, 0);
-    g.add(motorFoot);
-    const fan = new THREE.Group();
-    const fanDisc = cylinderAlongX(DIM.motor.radius * 0.6 * MM, 0.01, new THREE.MeshStandardMaterial({ color: COLORS.impeller }), 24);
-    fan.add(fanDisc);
-    fan.position.set((DIM.motor.length / 2 + 8) * MM, axisY, 0);
-    g.add(fan);
-    this.motorRotor = fan;
-    const gearMat = new THREE.MeshStandardMaterial({ color: COLORS.gear, roughness: 0.7, metalness: 0.3 });
-    const gearBox = box(DIM.gearBox.x, DIM.gearBox.y, DIM.gearBox.z, gearMat);
-    gearBox.position.set(layout.centerLength * 0.3 * MM, axisY, 0);
-    g.add(gearBox);
+    // 中央ベース：電磁制動装置、駆動電動機、変速歯車装置（第1図の並び）
+    const right = layout.pairs.filter((p) => p.side === 'right').sort((a, b) => a.x - b.x);
+    const left = layout.pairs.filter((p) => p.side === 'left').sort((a, b) => b.x - a.x);
+    const rightInner = sirenShaft(right[0]?.sirenIndexes[0]);
+    addBrake(fixed, m, DIM.center.brake * k);
+    addBrakeCover(housings, m, DIM.center.brake * k);
+    addMotor(fixed, m, DIM.center.motor * k);
+    const addGearSet = (x: number, dir: 1 | -1, inShaft: number, outShaft: number): void => {
+      const a = machine.shafts[inShaft]!.ratio;
+      const b = machine.shafts[outShaft]!.ratio;
+      const n = b.num * a.den;
+      const d = b.den * a.num;
+      const g = gcd(n, d);
+      const parts = buildGears(fixed, m, x, dir, n / g, d / g);
+      addGearCaseCover(housings, m, x, n / g, d / g);
+      root.add(parts.input, parts.counter, parts.output);
+      this.gearSets.push({ ...parts, inShaft, outShaft, num: n / g, den: d / g });
+    };
+    addGearSet(DIM.center.gear * k, 1, directShaft, rightInner);
     for (const eg of layout.extraGears) {
-      const gb = box(DIM.gearBox.x * 1.3, DIM.gearBox.y * 1.3, DIM.gearBox.z * 1.3, gearMat);
-      gb.position.set(eg.x * MM, axisY, 0);
-      g.add(gb);
+      // 歯車箱の内側（中央寄り）の軸が入力、外側の軸が出力
+      const side = eg.side === 'left' ? left : right;
+      const inner = side.filter((p) => Math.abs(p.x) < Math.abs(eg.x)).at(-1);
+      const outer = side.find((p) => Math.abs(p.x) > Math.abs(eg.x));
+      if (inner && outer) addGearSet(eg.x, eg.side === 'left' ? -1 : 1, sirenShaft(inner.sirenIndexes[0]), sirenShaft(outer.sirenIndexes[0]));
     }
 
-    // 対ごとの軸受ユニット（軸筒）とマグネット箱、対の間のカップリング
-    const bearingMat = new THREE.MeshStandardMaterial({ color: COLORS.base, roughness: 0.8 });
-    const magnetMat = new THREE.MeshStandardMaterial({ color: COLORS.magnet, roughness: 0.85 });
+    // カップリング：中央ベースの 4 つと、対と対の間
+    const addCoupling = (x: number, shaftIndex: number): void => {
+      const c = buildCoupling(m);
+      c.position.x = x;
+      root.add(c);
+      this.rotors.push({ object: c, shaftIndex });
+    };
+    DIM.center.couplings.forEach((x, i) => addCoupling(x * k, i === 3 ? rightInner : directShaft));
+    for (const side of [left, right]) {
+      for (let i = 0; i + 1 < side.length; i += 1) {
+        const a = side[i]!;
+        const b = side[i + 1]!;
+        const gearBetween = layout.extraGears.some((eg) => Math.abs(eg.x) > Math.abs(a.x) && Math.abs(eg.x) < Math.abs(b.x));
+        if (!gearBetween) addCoupling((a.x + b.x) / 2, sirenShaft(b.sirenIndexes[0]));
+      }
+    }
+
+    // 対ごとの軸受ユニットとマグネットカバー
     for (const pair of layout.pairs) {
-      const pedestal = box(DIM.pairGap - 40, DIM.axisHeight, 260, bearingMat);
-      pedestal.position.set(pair.x * MM, (DIM.baseHeight + DIM.axisHeight / 2) * MM, 0);
-      g.add(pedestal);
-      const housing = cylinderAlongX(0.07, (DIM.pairGap - 40) * MM, bearingMat, 24);
-      housing.position.set(pair.x * MM, axisY, 0);
-      g.add(housing);
-      const magnet = box(DIM.magnetBox.x, DIM.magnetBox.y, DIM.magnetBox.z, magnetMat);
-      magnet.position.set(pair.x * MM, (DIM.baseHeight + DIM.magnetBox.y / 2) * MM, (DIM.baseWidth / 2 - DIM.magnetBox.z / 2 - 20) * MM);
-      g.add(magnet);
+      addBearingUnit(fixed, m, pair.x);
+      addMagnetBox(housings, m, pair.x);
     }
 
-    // サイレン本体
+    // サイレン本体。吸気側（+x）が facing の向きになるように鏡映する。
     for (const placement of layout.sirens) {
       const siren = machine.sirens[placement.sirenIndex];
       if (!siren) continue;
-      const shaftIndex = machine.shafts.findIndex((s) => s.id === siren.shaftId);
-      const parts = buildSiren(siren.ports, siren.index, shaftIndex);
-      parts.group.position.set(placement.x * MM, axisY, 0);
-      if (placement.facing < 0) parts.group.rotation.y = Math.PI;
-      g.add(parts.group);
+      const shaftIndex = shaftIndexOf(siren.shaftId);
+      const parts = buildSiren(m, siren.ports, siren.index, shaftIndex);
+      parts.group.position.set(placement.x, AXIS_Y, 0);
+      parts.group.scale.x = placement.facing;
+      const blur = new THREE.Mesh(blurGeometry, this.blurMaterials[shaftIndex]);
+      blur.renderOrder = 1;
+      parts.group.add(blur);
+      root.add(parts.group);
       this.sirens.push(parts);
     }
 
-    // 建屋（伊賀の寸法 4.4 × 1.5 × 2.0 m）。中を見せるために半透明。
-    const bld = new THREE.Group();
-    const bx = Math.max(DIM.building.x, layout.totalLength + 500) * MM;
-    const walls = new THREE.Mesh(
-      new THREE.BoxGeometry(bx, DIM.building.y * MM, DIM.building.z * MM),
-      new THREE.MeshStandardMaterial({ color: COLORS.building, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false }),
-    );
-    walls.position.y = (DIM.building.y / 2) * MM;
-    bld.add(walls);
-    bld.add(new THREE.LineSegments(new THREE.EdgesGeometry(walls.geometry), new THREE.LineBasicMaterial({ color: 0x55606a })).translateY(walls.position.y));
-    bld.visible = this.options.showBuilding;
-    g.add(bld);
-    this.building = bld;
+    root.add(fixed.build());
+    this.housings = housings.build();
+    root.add(this.housings);
 
-    this.scene.add(g);
+    // 建屋（伊賀の寸法 4.4 × 1.5 × 2.0 m。機種が長いときは伸ばす）
+    this.building = buildBuilding(m, Math.max(DIM.building.x, layout.totalLength + 500));
+    root.add(this.building);
+
+    this.scene.add(root);
     this.setOptions(this.options);
-    this.controls.target.set(0, axisY, 0);
-    this.camera.position.set(layout.totalLength * MM * 0.55, 1.5, layout.totalLength * MM * 0.7);
+
+    // 影の範囲を機械に合わせる
+    const span = (layout.totalLength * MM) / 2 + 0.6;
+    const cam = this.sun.shadow.camera;
+    cam.left = -span;
+    cam.right = span;
+    cam.top = 2.2;
+    cam.bottom = -2.2;
+    cam.near = 0.5;
+    cam.far = 16;
+    cam.updateProjectionMatrix();
+    this.sun.target.position.set(0, 0.3, 0);
+
+    // 視点：右の端の対に寄った斜め前から。マグネットカバーは伊賀機の映像と同じく奥（+z）に来る。
+    const focus = right.at(-1)?.x ?? 0;
+    this.controls.target.set(focus * MM * 0.55, AXIS_Y * MM * 0.9, 0);
+    this.camera.position.set(focus * MM + 1.15, AXIS_Y * MM + 0.55, -1.75);
   }
 
   update(state: MachineState): void {
+    const rps = state.drive.rps;
     for (const s of this.sirens) {
-      const turns = state.shaftTurns[s.shaftIndex] ?? 0;
-      s.impeller.rotation.x = turns * Math.PI * 2;
-      const angle = state.coverAngles[s.sirenIndex] ?? 0;
-      // 閉：板が窓の上（角度 0）。角度 1（ストッパー）で半ピッチ回って板が窓の間に来る。
-      s.openingCover.rotation.x = (angle * Math.PI) / s.ports;
+      s.impeller.rotation.x = (state.shaftTurns[s.shaftIndex] ?? 0) * TAU;
+      poseSiren(s, state.coverAngles[s.sirenIndex] ?? 0);
     }
-    if (this.motorRotor) {
-      // モーター軸は直結の軸（変速比 1）と同じ位相
-      const direct = this.directShaftIndex;
-      this.motorRotor.rotation.x = (state.shaftTurns[direct] ?? 0) * Math.PI * 2;
+    for (const r of this.rotors) r.object.rotation.x = (state.shaftTurns[r.shaftIndex] ?? 0) * TAU;
+    for (const g of this.gearSets) {
+      // 歯がかみ合ったまま回るように、折り返した位相から入力軸の回転数を取り戻す
+      const t = unwrapInputTurns(state.shaftTurns[g.inShaft] ?? 0, state.shaftTurns[g.outShaft] ?? 0, g.num, g.den);
+      g.input.rotation.x = t * TAU;
+      g.counter.rotation.x = counterAngle(g.train, t);
+      g.output.rotation.x = ((t * g.num) / g.den) * TAU;
     }
+    // 速く回る羽根は、画面のコマ数では止まって見えたり逆に回って見えたりするので、残像に置き換える
+    const blur = this.blurMaterials.map((mat, i) => {
+      const amount = smoothstep(4, 12, Math.abs(rps * (this.shaftRatios[i] ?? 1)));
+      mat.opacity = 0.72 * amount;
+      mat.visible = amount > 0;
+      return amount;
+    });
+    for (const s of this.sirens) s.blades.visible = (blur[s.shaftIndex] ?? 0) < 1;
+  }
+
+  /** 視点を置く（m）。確認用。 */
+  setCamera(position: readonly [number, number, number], target: readonly [number, number, number]): void {
+    this.camera.position.set(...position);
+    this.controls.target.set(...target);
+    this.controls.update();
   }
 
   render(): void {

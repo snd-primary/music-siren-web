@@ -1,5 +1,5 @@
 // 画面。機構モデル（mechanism/）を requestAnimationFrame で進め、その状態を音響（audio/）に渡す。
-// 3D（scene/）も同じ状態を読む予定。
+// 3D（scene/）も同じ状態を読む。
 import { AudioEngine } from './audio/engine';
 import { formatDegree, degreeRatio } from './mechanism/degree';
 import { buildMachine, type Machine } from './mechanism/machine';
@@ -42,6 +42,8 @@ const tablesBox = $<HTMLElement>('#tables');
 const viewCanvas = $<HTMLCanvasElement>('#view');
 const buildingCheck = $<HTMLInputElement>('#building');
 const seeThroughCheck = $<HTMLInputElement>('#seethrough');
+const housingsCheck = $<HTMLInputElement>('#housings');
+const sectionCheck = $<HTMLInputElement>('#section');
 
 /**
  * 鍵盤に割り当てるキー（低い音から）。文字ではなく物理キーの位置（KeyboardEvent.code）で判定する。
@@ -332,10 +334,25 @@ window.addEventListener('blur', () => {
   for (const i of keyOrder) setKey(i, false);
 });
 
-const applyViewOptions = () => view.setOptions({ showBuilding: buildingCheck.checked, seeThrough: seeThroughCheck.checked });
-buildingCheck.addEventListener('change', applyViewOptions);
-seeThroughCheck.addEventListener('change', applyViewOptions);
+const applyViewOptions = () =>
+  view.setOptions({
+    showBuilding: buildingCheck.checked,
+    seeThrough: seeThroughCheck.checked,
+    hideHousings: housingsCheck.checked,
+    section: sectionCheck.checked,
+  });
+for (const check of [buildingCheck, seeThroughCheck, housingsCheck, sectionCheck]) check.addEventListener('change', applyViewOptions);
 window.addEventListener('resize', () => view.resize());
+
+// 開発時だけ、コンソールから視点と鍵盤を動かせるようにする（3D の確認用）。
+if (import.meta.env.DEV) {
+  const spin = (): void => {
+    // 音を出さずに定常回転にする
+    state = snapToSteady(state, params);
+    input = { ...input, power: true, brake: false };
+  };
+  Object.assign(window, { __siren: { view, setKey, spin, snapStop } });
+}
 
 rebuildMachine();
 renderTables();

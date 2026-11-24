@@ -10,31 +10,52 @@
 
 import type { Machine, Side } from '../mechanism/machine';
 
-/** mm。 */
+/**
+ * mm。サイレン本体の寸法は説明書の第2図（350φ）の比率から、中央ベースの並びは第1図の比率から拾った。
+ * 色と細部は伊賀機の映像（docs/adr/0017-3d-from-figures-and-video.md）。
+ */
 export const DIM = {
   pairPitch: 570,
   sideMargin: 43, // 1183 − 2 × 570
   centerBase8: 1500,
   centerBase: 1530,
   gearExtra: 396, // 12C の 2149 − 1753
-  baseWidth: 770,
-  baseHeight: 200,
-  /** 軸の中心の、基礎上面からの高さ。 */
-  axisHeight: 420,
+  /** 左右ベースの幅。第4図の基礎ボルトの間隔が 570、基礎の幅が 770。 */
+  baseWidth: 620,
+  /** 中央ベースの幅。第4図の基礎の幅が 955。 */
+  centerBaseWidth: 800,
+  /** 床からベース上面までの高さ（足を含む）。 */
+  baseHeight: 160,
+  /** 軸の中心の、ベース上面からの高さ。第2図では開閉カバーの下端が軸受の座面とほぼ同じ高さ。 */
+  axisHeight: 230,
   shaftRadius: 25,
-  /** 開閉カバーの外半径。350φ より少し大きい。 */
-  coverRadius: 200,
-  impellerRadius: 170,
-  /** サイレン本体 1 台の軸方向の長さ。 */
-  drumLength: 150,
-  /** 対の中の 2 台の隙間（軸受ユニット）。 */
-  pairGap: 180,
+  /** 開閉カバーの胴の外半径。 */
+  coverRadius: 195,
+  /** 開閉カバーの吸気側の縁（つば）の外半径。 */
+  flangeRadius: 203,
+  /** 固定カバーの胴の外半径。開閉カバーとの隙間は実機では 0.2 mm ほど。 */
+  fixedRadius: 187,
+  /** 羽根車の外半径（350φ）。 */
+  impellerRadius: 175,
+  /** 吸気口（固定カバーの前の環の内側）の半径。 */
+  eyeRadius: 105,
+  /** サイレン本体 1 台の軸方向の長さ（開閉カバーの幅）。 */
+  drumLength: 110,
+  /** 対の中の 2 台の背板の間隔（軸受ユニットが入る）。第1図で対の 2 台の中心間隔が約 370。 */
+  pairGap: 262,
+  /** 窓の幅の、ピッチに対する比（見た目）。第2図の側面図では約半分。 */
   windowWidthRatio: 0.45,
-  windowHeight: 60,
-  magnetBox: { x: 260, y: 300, z: 200 },
-  motor: { length: 520, radius: 190 },
-  brake: { x: 220, y: 480, z: 480 },
-  gearBox: { x: 220, y: 260, z: 260 },
+  /** 窓の軸方向の長さ。 */
+  windowLength: 70,
+  /** マグネットカバー（箱）。x は軸方向、z は奥行き、zNear は軸から箱の手前の面まで。 */
+  magnetBox: { x: 256, zNear: 110, zFar: 322, top: 100 },
+  /** 中央ベースの並び（中央ベースの中心からの位置）。第1図の比率。 */
+  center: { brake: -450, motor: 105, gear: 578, couplings: [-690, -165, 390, 700] },
+  motor: { length: 370, radius: 150 },
+  brake: { x: 200, y: 470, z: 520, drumRadius: 115, drumWidth: 80 },
+  gearCase: { x: 130, z: 230, top: 85 },
+  /** 歯車のモジュール。 */
+  gearModule: 2.5,
   building: { x: 4400, y: 2000, z: 1500 },
 } as const;
 

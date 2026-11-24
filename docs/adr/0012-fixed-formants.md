@@ -1,6 +1,6 @@
 # 0012. 固定の共鳴（フォルマント）を入れる
 
-- 状態：採用（[0004](0004-iga-sound-from-video.md) の duty・edge・radiationCutoffHz と、[0006](0006-jet-noise-and-headroom.md) の jet を置き換え）
+- 状態：採用（[0004](0004-iga-sound-from-video.md) の duty・edge・radiationCutoffHz と、[0006](0006-jet-noise-and-headroom.md) の jet を置き換え。duty・edge は [0016](0016-cover-narrows-window.md) で置き換え）
 - 日付：2026-11-22
 
 ## 背景

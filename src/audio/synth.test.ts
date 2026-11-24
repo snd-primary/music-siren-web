@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SYNTH, SirenSynth, portOpening } from './synth';
+import { DEFAULT_SYNTH, SirenSynth, portArea } from './synth';
 
 const SR = 48000;
 
@@ -79,10 +79,12 @@ describe('SirenSynth', () => {
   // 伊賀機の配置（左軸 4 台・右軸 4 台）と、映像の定常の回転数。
   const IGA = [8, 9, 10, 12, 15, 10, 9, 8].map((ports, i) => ({ ports, ratio: i < 4 ? 1 : 0.75 }));
   const IGA_RPS = 60 * 0.98694;
-  /** 伊賀機のサイレン 1 台だけを全開にした音。 */
-  function igaSolo(index: number, jet = 0): Float32Array {
+  /** 開いたカバーの停止位置（mechanism/simulation.ts の restAngle）。 */
+  const REST = 0.9;
+  /** 伊賀機のサイレン 1 台だけを開いた音（カバーは停止位置）。 */
+  function igaSolo(index: number, jet = 0, cover = REST): Float32Array {
     const synth = new SirenSynth({ ...DEFAULT_SYNTH, jet, gain: 0.02, sampleRate: SR, nominalRps: 60, sirens: IGA });
-    synth.setTarget({ motorRps: IGA_RPS, covers: IGA.map((_, i) => (i === index ? 1 : 0)) });
+    synth.setTarget({ motorRps: IGA_RPS, covers: IGA.map((_, i) => (i === index ? cover : 0)) });
     render(synth, SR / 2);
     return render(synth, SR);
   }
@@ -173,13 +175,72 @@ describe('SirenSynth', () => {
     expect(level(0.4) / level(0)).toBeCloseTo(1.4, 1);
   });
 
-  it('開口関数は半値幅 duty の台形で、縁は滑らか', () => {
-    expect(portOpening(0.5, 0.5, 0.16)).toBeCloseTo(1, 9);
-    expect(portOpening(0, 0.5, 0.16)).toBe(0);
-    expect(portOpening(0.25, 0.5, 0.16)).toBeCloseTo(0.5, 9); // 半値点
-    expect(portOpening(0.75, 0.5, 0.16)).toBeCloseTo(0.5, 9);
-    expect(portOpening(0.3, 0.5, 0.16)).toBeGreaterThan(0.5);
-    expect(portOpening(0.3, 0.5, 0.16)).toBeLessThan(1);
+  it('開口面積は 2 つの窓の重なり：台形で、高さは狭いほうの幅、底は幅の和', () => {
+    expect(portArea(0.5, 0.12, 0.2, 0)).toBeCloseTo(0.12, 12); // 重なりきる
+    expect(portArea(0.5 + 0.04, 0.12, 0.2, 0)).toBeCloseTo(0.12, 12); // 上底 |a − b| = 0.08 の中
+    expect(portArea(0.5 + 0.1, 0.12, 0.2, 0)).toBeCloseTo(0.06, 12); // 斜面の中央
+    expect(portArea(0.5 + 0.16, 0.12, 0.2, 0)).toBe(0); // 底 a + b = 0.32 の端
+    expect(portArea(0.5 - 0.1, 0.12, 0.2, 0)).toBeCloseTo(0.06, 12); // 左右対称
+    expect(portArea(0.5, 0.12, 0.03, 0)).toBeCloseTo(0.03, 12); // 細い隙間
+    expect(portArea(0.5, 0.12, 0, 0)).toBe(0);
+  });
+
+  it('縁をぼかしても開口面積の 1 周期の積分（平均の流量）は変わらず、角が丸まる', () => {
+    const mean = (blur: number) => {
+      let sum = 0;
+      for (let k = 0; k < 20000; k += 1) sum += portArea((k + 0.5) / 20000, 0.12, 0.18, blur);
+      return sum / 20000;
+    };
+    expect(mean(0)).toBeCloseTo(0.12 * 0.18, 6); // 幅の積
+    expect(mean(0.05)).toBeCloseTo(0.12 * 0.18, 6);
+    // 底の端（0.5 + 0.15）は、ぼかすと少し開く。上底の中は変わらない。
+    expect(portArea(0.65, 0.12, 0.18, 0.05)).toBeGreaterThan(0);
+    expect(portArea(0.65, 0.12, 0.18, 0.05)).toBeLessThan(0.01);
+    expect(portArea(0.5, 0.12, 0.18, 0.05)).toBeCloseTo(0.12, 12);
+    // 連続（隣り合う点の差が小さい）
+    for (let k = 0; k < 2000; k += 1) {
+      const d = portArea((k + 1) / 2000, 0.12, 0.18, 0.05) - portArea(k / 2000, 0.12, 0.18, 0.05);
+      expect(Math.abs(d)).toBeLessThan(0.0006);
+    }
+  });
+
+  it('開閉カバーは窓の幅を変える：開き始めの細い隙間は、開いた音より高次の倍音が多い', () => {
+    const tilt = (cover: number) => {
+      const out = igaSolo(1, 0, cover); // 「5」
+      const f = igaHz(1);
+      const hi = [5, 6, 7, 8].reduce((a, h) => a + magnitudeAt(out, f * h) ** 2, 0);
+      return 10 * Math.log10(hi / magnitudeAt(out, f) ** 2);
+    };
+    expect(tilt(0.15)).toBeGreaterThan(tilt(REST) + 6);
+    expect(tilt(0.3)).toBeGreaterThan(tilt(REST) + 3);
+  });
+
+  it('閉じたカバーの漏れは窓孔の全幅から出るので、倍音の形は重なりきった音と同じ', () => {
+    // 他のサイレンの漏れ音と重ならないよう、1 台だけで測る。
+    const f = 540;
+    const shape = (cover: number) => {
+      const synth = new SirenSynth({ ...DEFAULT_SYNTH, jet: 0, gain: 0.02, sampleRate: SR, nominalRps: 60, sirens: [{ ports: 9, ratio: 1 }] });
+      synth.setTarget({ motorRps: 60, covers: [cover] });
+      render(synth, SR / 2);
+      const out = render(synth, SR);
+      // 第 5 倍音は窓孔の幅 0.2 の谷（5 × 0.2 = 1）に当たるので外す。
+      return [2, 3, 4, 6].map((h) => 20 * Math.log10(magnitudeAt(out, f * h) / magnitudeAt(out, f)));
+    };
+    const closed = shape(0);
+    const full = shape(1);
+    for (let k = 0; k < closed.length; k += 1) expect(Math.abs(closed[k]! - full[k]!)).toBeLessThan(1);
+  });
+
+  it('開いたカバーが揺れると、基音より高次の倍音のほうが大きく動く', () => {
+    const levels = (cover: number) => {
+      const out = igaSolo(1, 0, cover);
+      const f = igaHz(1);
+      return [1, 5, 6].map((h) => 20 * Math.log10(magnitudeAt(out, f * h)));
+    };
+    const [a1, a5, a6] = levels(REST) as [number, number, number];
+    const [b1, b5, b6] = levels(1) as [number, number, number]; // ストッパーに当たった位置
+    expect(Math.abs(b1 - a1)).toBeLessThan(1.5);
+    expect(Math.max(Math.abs(b5 - a5), Math.abs(b6 - a6))).toBeGreaterThan(Math.abs(b1 - a1) + 3);
   });
 
   it('伊賀機の 4 音の和音でも、ピークは 0.75 未満（tanh でほとんど歪まない）', () => {
@@ -208,6 +269,23 @@ describe('SirenSynth', () => {
     synth.setTarget({ motorRps: 60, covers: [1, 1, 1, 0.5] });
     const out = render(synth, SR);
     for (const v of out) expect(Math.abs(v)).toBeLessThanOrEqual(1);
+  });
+
+  it('音色のパラメータは鳴らしながら差し替えられる（位相は保たれ、音が途切れない）', () => {
+    const synth = new SirenSynth({ ...DEFAULT_SYNTH, jet: 0, sampleRate: SR, nominalRps: 60, sirens: [{ ports: 8, ratio: 1 }] });
+    synth.setTarget({ motorRps: 60, covers: [0.9] });
+    render(synth, SR / 2);
+    const before = render(synth, SR / 2);
+    synth.setParams({ ...DEFAULT_SYNTH, jet: 0, gain: DEFAULT_SYNTH.gain / 2, formants: [] });
+    const first = render(synth, 64);
+    // 差し替えた直後の 1 サンプル目が、直前の続きから大きく飛ばない（位相を作り直していない）。
+    expect(Math.abs(first[0]! - before[before.length - 1]!)).toBeLessThan(0.2);
+    render(synth, SR / 2);
+    const after = render(synth, SR / 2);
+    expect(magnitudeAt(after, 480)).toBeGreaterThan(0.001);
+    // フォルマントを外すと、1300 Hz の谷に近い第 3 倍音（1440 Hz）が基音に対して強くなる。
+    const ratio = (x: Float32Array) => magnitudeAt(x, 1440) / magnitudeAt(x, 480);
+    expect(ratio(after)).toBeGreaterThan(ratio(before) * 3);
   });
 
   it('回転が止まれば音も止まる', () => {

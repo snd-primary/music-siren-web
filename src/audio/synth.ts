@@ -1,15 +1,21 @@
 // サイレン単位の最小の合成。Web Audio に依存しない純粋な DSP（テストはここに書く）。
 //
-// 1台のサイレン：羽根車が回り、固定カバーの窓孔と羽根の重なりが周期的に変わる。
+// 1台のサイレン：羽根車が回り、羽根車の窓と固定カバーの窓孔の重なりが周期的に変わる。
 // 羽根の数・固定カバーの窓数・開閉カバーの窓数はどれもポート数に等しい（YMSHA の助言）。
-// 開閉カバーの開度 c（0〜1）で窓孔全体が絞られる。閉じても leak の分だけ漏れる（伊賀・岡山の録音で確認）。
-//   開口面積 A(t) = (leak + (1−leak)·c) × a(φ)      φ = 窓孔1つ分の位相（ポート数 × 軸回転数 × t）
-//   流量      Q(t) = A × √P       P ∝ 回転数²  → Q ∝ A × 回転数
-//   音圧      p(t) ∝ dQ/dt        （単極子）、そのあと放射・距離のローパス（1次）
-// a(φ) は羽根と窓の重なりで、半値幅 duty・縁の幅 edge の台形（縁は余弦で丸める）。
-// duty ≈ 1/3 で 3・6 次の倍音が弱くなり、edge とローパスで高次の減り方が決まる。
-// 既定値は伊賀機の映像の倍音構造（「3」と「5」の平均：h2 ≈ −7.5 dB、h3 −23、h4 −18、h5 −20、h6 −31.5）に
-// 当てはめた（docs/adr/0004-iga-sound-from-video.md）。
+// 開閉カバーは固定カバーの窓孔の上を回って滑る板なので、開度 c（0〜1）は窓孔の「幅」を変える
+// （docs/adr/0016-cover-narrows-window.md）。閉じても、板と固定カバーの隙間から窓孔の全幅にわたって leak の分だけ
+// 漏れる（伊賀・岡山の録音で確認。漏れ音の倍音の形は開いた音とほぼ同じなので、細い隙間ではなく全幅の漏れ）。
+//   残る窓の幅 b = windowWidth × c                          幅はどれもポートの間隔（1 周期）に対する比
+//   開口面積   A(φ) = (1−leak)·W(rotorWidth, b) + leak·W(rotorWidth, windowWidth)
+//              W(a, b) = 幅 a の窓と幅 b の窓の重なり        φ = 窓孔1つ分の位相（ポート数 × 軸回転数 × t）
+//   流量       Q(t) = A × √P       P ∝ 回転数²  → Q ∝ A × 回転数
+//   音圧       p(t) ∝ dQ/dt        （単極子）、そのあと放射・距離のローパス（1次）
+// W は台形（底 rotorWidth + b、上底 |rotorWidth − b|、高さ min(rotorWidth, b)）で、角を幅 edgeBlur で丸める。
+// 倍音は sin(πh·rotorWidth)·sin(πh·b)/h の形になり、b が動くと谷の位置（h = 1/b の倍数）が動く。
+// そのため、開き始めの細い隙間は倍音が多く、開くにつれて高次が減る。開いたあとカバーが揺れる間は、
+// 基音より高次の倍音のほうが大きく動く（伊賀の映像の立ち上がりで、基音と逆向きに動くのを確認）。
+// 既定値は、停止位置（c = 0.9）での倍音が伊賀の映像の 4 音（2・3・5・6）に合うように、フォルマントと一緒に
+// 当てはめた（docs/adr/0012-fixed-formants.md、0016）。
 // 気流のノイズ：窓孔を抜ける噴流の乱流で、開口面積に比例して出る（伊賀の映像で、全開の音のまわりに
 // 広帯域のノイズが立つ。全開の音に対する総量は約 −12 dB で、8 kHz より上は減る）。
 // 羽根の通過で開口が周期的に変わるので、ノイズも基音で変調される。
@@ -40,11 +46,13 @@ export interface SynthConfig {
   readonly sirens: readonly SynthSirenConfig[];
   /** 公称のモーター回転数 [rps]。圧力と音量の基準。 */
   readonly nominalRps: number;
-  /** 開口関数（台形）の半値幅。周期に対する比。 */
-  readonly duty: number;
-  /** 開口関数の縁（0→1 に立ち上がる区間）の幅。周期に対する比。 */
-  readonly edge: number;
-  /** 閉じたカバーからの漏れ。全開の開口面積に対する比。 */
+  /** 羽根車の窓の幅。ポートの間隔（1 周期）に対する比。 */
+  readonly rotorWidth: number;
+  /** 固定カバーの窓孔の幅（開閉カバーが重なりきったときに残る幅）。ポートの間隔に対する比。 */
+  readonly windowWidth: number;
+  /** 窓の縁のぼけ（羽根の縁が斜めに横切る分・隙間からの回り込み）。ポートの間隔に対する比。 */
+  readonly edgeBlur: number;
+  /** 閉じたカバーからの漏れ（板と固定カバーの隙間）。窓孔の全幅にわたる、全開の開口面積に対する比。 */
   readonly leak: number;
   /** 放射と距離を代表する 1 次ローパスのカットオフ [Hz]。 */
   readonly radiationCutoffHz: number;
@@ -58,13 +66,18 @@ export interface SynthConfig {
   readonly formants: readonly Formant[];
 }
 
-export const DEFAULT_SYNTH: Omit<SynthConfig, 'sampleRate' | 'sirens' | 'nominalRps'> = {
-  // 伊賀の映像の 4 音（2・3・5・6）の倍音に、フォルマントと一緒に当てはめた（0012）。
-  duty: 0.175,
-  edge: 0.175,
+/** 音色のパラメータ（機械の構成とサンプリング周波数を除いたもの）。鳴らしながら変えられる。 */
+export type SynthParams = Omit<SynthConfig, 'sampleRate' | 'sirens' | 'nominalRps'>;
+
+export const DEFAULT_SYNTH: SynthParams = {
+  // 伊賀の映像の 4 音（2・3・5・6）の倍音に、フォルマントと一緒に当てはめた（0012、0016）。停止位置（開度 0.9）で
+  // 残る窓の幅が 0.18、もう一方が 0.115。どちらが羽根車でどちらが固定カバーかは、倍音からは決まらない（仮定）。
+  rotorWidth: 0.115,
+  windowWidth: 0.2,
+  edgeBlur: 0.08,
   // 伊賀の映像：閉じたカバーからの漏れは全開より約 −19 dB（自動利得の分を補正）。閉じている間は圧がたまり
-  // （surge 0.5）、開いても重なりは停止位置の 0.85 なので、その分を見込んで 0.07 にした。
-  leak: 0.07,
+  // （surge 0.5）、開いても重なりは停止位置の 0.9 なので、その分を見込んで 0.075 にした。
+  leak: 0.075,
   // 高域の減り方はフォルマントが受け持つので、ローパスはほぼ外す（0012）。
   radiationCutoffHz: 5000,
   gain: 0.12, // 単音の全開で約 −20 dBFS。4 音の和音でもピークが 0.75 未満で、tanh でほとんど歪まない
@@ -88,11 +101,30 @@ export function peakingCoefficients(f: Formant, sampleRate: number): [number, nu
   return [(1 + alpha * A) / a0, (-2 * cos) / a0, (1 - alpha * A) / a0, (-2 * cos) / a0, (1 - alpha / A) / a0];
 }
 
-/** 窓孔の重なり（0〜1）。ph は 0〜1 の位相。 */
-export function portOpening(ph: number, duty: number, edge: number): number {
-  const d = Math.abs(ph - 0.5);
-  const a = Math.min(1, Math.max(0, (duty / 2 + edge / 2 - d) / edge));
-  return 0.5 - 0.5 * Math.cos(Math.PI * a);
+/** 台形（半底 B、高さ m）を 0 から u（≥ 0）まで積分したもの。 */
+function trapezoidIntegral(u: number, B: number, m: number): number {
+  const P = B - m; // 上底の半分
+  if (u <= P) return m * u;
+  if (u >= B) return m * P + (m * m) / 2;
+  const d = u - P;
+  return m * P + m * d - (d * d) / 2;
+}
+
+/**
+ * 幅 a の窓と幅 b の窓の重なり（ポートの間隔に対する比）。ph は 0〜1 の位相で、0.5 で 2 つの窓の中心が揃う。
+ * 重なりは台形（底 a + b、上底 |a − b|、高さ min(a, b)）で、角を幅 blur の移動平均で丸める。
+ */
+export function portArea(ph: number, a: number, b: number, blur: number): number {
+  const m = Math.min(a, b);
+  if (m <= 0) return 0;
+  const B = (a + b) / 2;
+  const x = Math.abs(ph - 0.5);
+  if (blur <= 0) return Math.min(m, Math.max(0, B - x));
+  if (x >= B + blur / 2) return 0;
+  // 台形は偶関数。x − blur/2 が負のときは、0 をまたぐ分を足す。
+  const hi = trapezoidIntegral(x + blur / 2, B, m);
+  const lo = x - blur / 2;
+  return (lo >= 0 ? hi - trapezoidIntegral(lo, B, m) : hi + trapezoidIntegral(-lo, B, m)) / blur;
 }
 
 export interface SynthTarget {
@@ -112,19 +144,19 @@ export class SirenSynth {
   private rpsTarget = 0;
   private readonly rpsSmooth: number;
   private readonly coverSmooth: number;
-  private readonly lowpass: number;
+  private lowpass = 0;
   private lowpassState = 0;
-  private readonly jetLowpass: number;
+  private jetLowpass = 0;
   private jetState = 0;
   private jetState2 = 0;
   private noiseState = 0x9e3779b9;
   private readonly surge: Float64Array;
   private readonly surgeTarget: Float64Array;
   /** フォルマントの係数（5 個ずつ）と状態（転置直接形 II、2 個ずつ）。 */
-  private readonly formantCoef: Float64Array;
-  private readonly formantState: Float64Array;
+  private formantCoef = new Float64Array(0);
+  private formantState = new Float64Array(0);
 
-  constructor(private readonly config: SynthConfig) {
+  constructor(private config: SynthConfig) {
     const n = config.sirens.length;
     this.phase = new Float64Array(n);
     this.prevFlow = new Float64Array(n);
@@ -136,10 +168,22 @@ export class SirenSynth {
     this.rpsSmooth = 1 - Math.exp(-1 / (0.02 * config.sampleRate));
     // カバーは約 8 Hz で揺れるので、更新（約 60 Hz）の段差だけをならす程度にする。
     this.coverSmooth = 1 - Math.exp(-1 / (0.006 * config.sampleRate));
+    this.updateFilters();
+  }
+
+  /** 音色のパラメータを差し替える。回転の位相やフィルタの状態は保つので、鳴らしながら変えられる。 */
+  setParams(params: SynthParams): void {
+    this.config = { ...this.config, ...params };
+    this.updateFilters();
+  }
+
+  private updateFilters(): void {
+    const config = this.config;
     this.lowpass = 1 - Math.exp((-2 * Math.PI * config.radiationCutoffHz) / config.sampleRate);
     this.jetLowpass = 1 - Math.exp((-2 * Math.PI * config.jetCutoffHz) / config.sampleRate);
     this.formantCoef = new Float64Array(config.formants.flatMap((f) => peakingCoefficients(f, config.sampleRate)));
-    this.formantState = new Float64Array(config.formants.length * 2);
+    // 段数が変わったときだけ状態を作り直す。
+    if (this.formantState.length !== config.formants.length * 2) this.formantState = new Float64Array(config.formants.length * 2);
   }
 
   setTarget(target: SynthTarget): void {
@@ -162,7 +206,9 @@ export class SirenSynth {
   }
 
   render(out: Float32Array): void {
-    const { sampleRate, sirens, nominalRps, duty, edge, leak, gain, jet } = this.config;
+    const { sampleRate, sirens, nominalRps, rotorWidth, windowWidth, edgeBlur, leak, gain, jet } = this.config;
+    // 重なりきったときの開口面積（台形の高さ）を 1 にそろえる。
+    const areaScale = 1 / Math.min(rotorWidth, windowWidth);
     const twoPi = Math.PI * 2;
     for (let n = 0; n < out.length; n += 1) {
       this.rps += (this.rpsTarget - this.rps) * this.rpsSmooth;
@@ -179,9 +225,13 @@ export class SirenSynth {
         this.phase[i] = ph;
         const sg = (this.surge[i] as number) + ((this.surgeTarget[i] as number) - (this.surge[i] as number)) * this.coverSmooth;
         this.surge[i] = sg;
-        const opening = leak + (1 - leak) * c;
-        if (opening <= 0 && (this.prevFlow[i] as number) === 0) continue;
-        const area = opening * portOpening(ph, duty, edge);
+        if (c <= 0 && leak <= 0 && (this.prevFlow[i] as number) === 0) continue;
+        // 開閉カバーは窓孔の片側から開くので、残る窓の中心は窓孔の中心から (windowWidth − b)/2 ずれる。
+        const b = windowWidth * c;
+        let slit = ph + (windowWidth - b) / 2;
+        if (slit >= 1) slit -= 1;
+        const area =
+          ((1 - leak) * portArea(slit, rotorWidth, b, edgeBlur) + leak * portArea(ph, rotorWidth, windowWidth, edgeBlur)) * areaScale;
         const flow = area * speed * (1 + sg);
         // dQ/dt を、公称音程での角周波数で正規化して、音程によらず同じ程度の大きさにする。
         const nominalCycles = s.ports * s.ratio * nominalRps;

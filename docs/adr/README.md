@@ -20,6 +20,7 @@
 | [0013](0013-furusato-10b-recording.md) | 「ふるさと」の録音（10B）の所見を記録し、モデルは変えない | 採用 |
 | [0014](0014-cover-close-and-no-residual-pressure.md) | v1 の残圧は移植せず、閉じる側を伊賀の映像に当てはめる | 採用 |
 | [0015](0015-furusato.md) | ふるさとを入れる（旋律は公開楽譜から、低い 5・7 はオクターブ上に移す） | 採用 |
+| [0016](0016-cover-narrows-window.md) | 開閉カバーは開口の倍率ではなく、窓孔の幅を変える | 提案 |
 
 `docs/music-siren-project.md`（調査メモ）と `docs/handoff-2026-10-28.md`（引き継ぎ）は ADR 以前の文書として残す。
 内容が ADR と食い違うときは ADR を優先する。

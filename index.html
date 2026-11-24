@@ -23,6 +23,14 @@
       th { background: #8882; }
       td:first-child, th:first-child { text-align: left; }
       meter { width: 6rem; }
+      #tuning { display: grid; grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr)); gap: 0 1.5rem; margin-top: 0.5rem; }
+      .tuning-group h3 { font-size: 0.9rem; margin: 0.6rem 0 0.2rem; }
+      .tuning-row { display: grid; grid-template-columns: 11rem 1fr 5.5rem; gap: 0.5rem; align-items: center; font-size: 0.85rem; padding: 0.1rem 0.3rem; border-radius: 4px; }
+      .tuning-row.changed { background: #d9a52a33; }
+      .tuning-row input[type=number] { font: inherit; width: 100%; box-sizing: border-box; text-align: right; }
+      .tuning-buttons { grid-column: 1 / -1; display: flex; gap: 0.5rem; margin-top: 0.8rem; }
+      #tuning > small { grid-column: 1 / -1; margin-top: 0.3rem; }
+      .tuning-output { grid-column: 1 / -1; background: #8882; border-radius: 6px; padding: 0.5rem 0.8rem; font-size: 0.8rem; max-height: 14rem; overflow: auto; user-select: all; }
     </style>
   </head>
   <body>
@@ -53,6 +61,14 @@
     <fieldset>
       <legend>鍵盤（押している間だけ開閉カバーが開く。キーボードは低い音から A S D F G H J K L ; ' ]）</legend>
       <div id="keys"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>音の調整</legend>
+      <details>
+        <summary>パラメータを開く（鳴らしながら動かせる）</summary>
+        <div id="tuning"></div>
+      </details>
     </fieldset>
 
     <fieldset>

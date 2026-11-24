@@ -1,10 +1,11 @@
 /// <reference path="./worklet-globals.d.ts" />
 // AudioWorklet 側。メインスレッドから機構の状態（モーター回転数、各カバーの開度）を受け取り、
-// SirenSynth で毎サンプル合成する。設定（サイレンの構成）も message で受け取る。
-import { SirenSynth, type SynthConfig, type SynthTarget } from './synth';
+// SirenSynth で毎サンプル合成する。設定（サイレンの構成）と音色のパラメータも message で受け取る。
+import { SirenSynth, type SynthConfig, type SynthParams, type SynthTarget } from './synth';
 
 export type ProcessorMessage =
   | { readonly type: 'config'; readonly config: Omit<SynthConfig, 'sampleRate'> }
+  | { readonly type: 'params'; readonly params: SynthParams }
   | { readonly type: 'target'; readonly target: SynthTarget };
 
 class SirenProcessor extends AudioWorkletProcessor {
@@ -15,6 +16,7 @@ class SirenProcessor extends AudioWorkletProcessor {
     this.port.onmessage = (e: MessageEvent<ProcessorMessage>) => {
       const msg = e.data;
       if (msg.type === 'config') this.synth = new SirenSynth({ ...msg.config, sampleRate });
+      else if (msg.type === 'params') this.synth?.setParams(msg.params);
       else if (msg.type === 'target') this.synth?.setTarget(msg.target);
     };
   }

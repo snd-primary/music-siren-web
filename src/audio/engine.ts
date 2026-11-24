@@ -4,9 +4,11 @@ import type { Machine } from '../mechanism/machine';
 import { ratioToNumber } from '../mechanism/ratio';
 import type { MachineState } from '../mechanism/simulation';
 import type { ProcessorMessage } from './siren-processor';
-import { DEFAULT_SYNTH } from './synth';
+import { DEFAULT_SYNTH, type SynthParams } from './synth';
 
 export class AudioEngine {
+  private synthParams: SynthParams = DEFAULT_SYNTH;
+
   private constructor(
     private readonly context: AudioContext,
     private readonly node: AudioWorkletNode,
@@ -29,7 +31,7 @@ export class AudioEngine {
     const msg: ProcessorMessage = {
       type: 'config',
       config: {
-        ...DEFAULT_SYNTH,
+        ...this.synthParams,
         nominalRps,
         sirens: machine.sirens.map((s) => {
           const shaft = machine.shafts.find((sh) => sh.id === s.shaftId);
@@ -37,6 +39,13 @@ export class AudioEngine {
         }),
       },
     };
+    this.node.port.postMessage(msg);
+  }
+
+  /** 音色のパラメータを差し替える（鳴らしながら変えられる）。 */
+  setSynthParams(params: SynthParams): void {
+    this.synthParams = params;
+    const msg: ProcessorMessage = { type: 'params', params };
     this.node.port.postMessage(msg);
   }
 

@@ -20,6 +20,7 @@ import { SONGS } from './songs';
 import { compileSong, missingDegrees, type CamProgram } from './mechanism/cam';
 import { AUTO_IDLE, DEFAULT_AUTO_PARAMS, skipLeadIn, startAuto, stepAutoplay, stopAuto, type AutoState } from './mechanism/autoplay';
 import { SirenScene } from './scene/scene';
+import { createTuningPanel, type Tuning } from './ui/tuning';
 
 const $ = <T extends Element>(sel: string): T => {
   const el = document.querySelector<T>(sel);
@@ -80,8 +81,14 @@ async function loadKeyLabels(): Promise<void> {
 }
 
 let machine: Machine = buildMachine(PRESETS[0]!);
-let params: MachineParams = DEFAULT_MACHINE_PARAMS;
-let state: MachineState = initialMachineState(machine);
+/** 音の調整パネルの値（合成と開閉カバー）。鳴らしながら変わる。 */
+let tuning: Tuning = createTuningPanel($<HTMLElement>('#tuning'), (t) => {
+  tuning = t;
+  params = { ...params, cover: t.cover };
+  engine?.setSynthParams(t.synth);
+});
+let params: MachineParams = { ...DEFAULT_MACHINE_PARAMS, cover: tuning.cover };
+let state: MachineState = initialMachineState(machine, params);
 let input: MachineInput = { power: false, brake: false, keys: machine.sirens.map(() => false) };
 let engine: AudioEngine | null = null;
 let autoState: AutoState = AUTO_IDLE;
@@ -114,7 +121,7 @@ function keyButtonHtml(sirenIndex: number, pos: number): string {
 function rebuildMachine(): void {
   const spec = PRESETS.find((p) => p.id === presetSelect.value) ?? PRESETS[0]!;
   machine = buildMachine(spec);
-  state = initialMachineState(machine);
+  state = initialMachineState(machine, params);
   manualKeys = machine.sirens.map(() => false);
   input = { power: false, brake: false, keys: [...manualKeys] };
   autoState = AUTO_IDLE;
@@ -191,6 +198,7 @@ function rebuildProgram(): void {
 async function ensureAudio(): Promise<void> {
   if (!engine) {
     engine = await AudioEngine.create();
+    engine.setSynthParams(tuning.synth);
     engine.setMachine(machine, nominalRps());
   }
   await engine.resume();
